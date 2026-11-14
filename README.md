@@ -149,6 +149,8 @@ python -m unittest discover -s tests            # tests, without network access
 - **Adding a platform.** A link that no integration takes is archived as a web page. An integration teaches Archiver one site, so that its videos or threads are kept as such: it is one file in [`archiver/integrations`](archiver/integrations), listed in `MODULES`. The contract is described at the top of [`__init__.py`](archiver/integrations/__init__.py), and [`mastodon.py`](archiver/integrations/mastodon.py) is a short example. Give it an icon in [`web/render.js`](web/render.js) and tests that run without network access.
 - **Adding a language.** Copy `en.json` in [`web/locales`](web/locales) and `fr.json` in [`archiver/locales`](archiver/locales) under the language's code, then translate the values, leaving keys and `{braces}` as they are. The extension has its own texts in [`extension/_locales`](extension/_locales).
 
+Pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Responsible use
 
 Archiver is for personal archiving: a copy, for yourself, of public content you have seen. It logs in to no site and uses none of your browser's cookies, and does not handle private, paid or DRM-protected content. Respect copyright and each site's terms, do not redistribute what you archive, and do not run a public instance for others.
