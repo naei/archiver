@@ -1,0 +1,81 @@
+/* Colors follow Archiver's themes, picked by the system setting. */
+:root {
+  color-scheme: dark light;
+  --paper: #1c1f27;
+  --raised: #242833;
+  --ink: #e6e8ee;
+  --text: #c9ccd6;
+  --muted: #8a90a0;
+  --line: #3a4050;
+  --blue: #7c95ff;
+  --on-blue: #0c1024;
+  --red: #e07070;
+  --green: #6fc48d;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --paper: #ffffff;
+    --raised: #f3f4f8;
+    --ink: #1c1f27;
+    --text: #3a4050;
+    --muted: #5c6272;
+    --line: #c9cdd8;
+    --blue: #4667d5;
+    --on-blue: #ffffff;
+    --red: #b83a3a;
+    --green: #23794a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+p { margin: 0; }
+
+button {
+  font: inherit;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button.primary { border-color: var(--blue); background: var(--blue); color: var(--on-blue); font-weight: 600; }
+button.link { padding: 7px 4px; border-color: transparent; background: none; color: var(--muted); }
+button:disabled { opacity: .6; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* Popup */
+.popup { width: 300px; padding: 16px; }
+.popup #message { color: var(--ink); font-weight: 600; }
+.popup[data-state="done"] #message { color: var(--green); }
+.popup[data-state="error"] #message { color: var(--red); }
+.popup #page { margin-top: 4px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popup .actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; }
+.popup .actions:not(:has(button:not([hidden]))) { display: none; }
+
+/* Settings */
+.options main { max-width: 420px; margin: 0 auto; padding: 48px 16px; }
+.options h1 { margin: 16px 0 8px; color: var(--ink); font-size: 20px; }
+.options p { margin-bottom: 20px; }
+.options label { display: block; margin-bottom: 14px; }
+.options label span { display: block; margin-bottom: 4px; color: var(--ink); font-weight: 600; }
+.options input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+}
+.options #error { color: var(--red); }

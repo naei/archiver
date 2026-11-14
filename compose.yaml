@@ -1,0 +1,54 @@
+services:
+  archiver:
+    build: .
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8000}:8000"
+    environment:
+      PORT: "8000"
+      DATA_DIR: /data
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      ARCHIVER_FIXITY_DAYS: ${ARCHIVER_FIXITY_DAYS:-30}
+      ARCHIVER_CHECK_DAYS: ${ARCHIVER_CHECK_DAYS:-7}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_PREFIX: ${S3_PREFIX:-archiver}
+      S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      PROXY: ${PROXY:-}
+      PROXY_MODE: ${PROXY_MODE:-always}
+      RELAY_TOKEN: ${RELAY_TOKEN:-}
+    volumes:
+      - archive-data:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # Optional, on a computer at home: archives the links the server at RELAY_SERVER could not download.
+  # Started by name, with the server's settings: docker compose --env-file .env.relay up -d relay
+  relay:
+    build: .
+    profiles: ["relay"]
+    command: ["python", "run.py", "relay"]
+    environment:
+      STORAGE_BACKEND: s3
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_PREFIX: ${S3_PREFIX:-archiver}
+      S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      RELAY_SERVER: ${RELAY_SERVER:-}
+      RELAY_TOKEN: ${RELAY_TOKEN:-}
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  archive-data:

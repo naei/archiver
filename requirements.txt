@@ -1,0 +1,6 @@
+yt-dlp[default,curl-cffi]>=2026.10.26,<2027
+# curl_cffi 0.16 could not resolve IPv6 addresses on macOS, and fell back to IPv4 addresses YouTube refused (November 2026).
+curl_cffi>=0.14,<0.15
+boto3>=1.42,<2
+cryptography>=46,<51
+trafilatura>=2.3,<3

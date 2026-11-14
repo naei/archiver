@@ -1,0 +1,12 @@
+data/
+.env
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+.test-artifacts/
+.playwright-mcp/
+.env.*
+!.env.example
+.local/
