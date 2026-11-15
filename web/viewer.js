@@ -37,7 +37,9 @@ function showPrivate(shown) {
   render();
 }
 
-showPrivate(false);
+// The first rendering is left to applyAddress, below, which reads the page's address before anything replaces it.
+state.items = library.filter((item) => !isPrivate(item));
+renderPrivateToggle();
 $("#private-toggle").addEventListener("click", () => {
   showPrivate(!state.unlocked);
   toast(t(state.unlocked ? "private.shown" : "private.hidden"));

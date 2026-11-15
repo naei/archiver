@@ -60,6 +60,9 @@ class Export:
         self.storage = storage
         self.store = store
         day = date.fromisoformat(exported_at[:10])
+        # ZIP timestamps have a seven-bit year offset from 1980. Keep the requested date
+        # in the catalog, but clamp file timestamps so an unusual client clock cannot break an export.
+        day = min(max(day, date(1980, 1, 1)), date(2107, 12, 31))
         self.dos_date = ((day.year - 1980) << 9) | (day.month << 5) | day.day
         self.records = viewer.records(items, storage)
         page = viewer.build(self.records, exported_at, f"{FOLDER}/")
@@ -72,15 +75,11 @@ class Export:
             if item["status"] != "ready":
                 continue
             files = item["files"]
-            if files:
-                # The record is rebuilt from the catalog: always current, and sized without a storage call.
-                record = manifest.render(item, written_at)
-                self.entries.append(Entry(f"{root}/{FOLDER}/{item['id']}/{manifest.NAME}", len(record), data=record, crc=zlib.crc32(record)))
-                digest.update(record)
-                names = sorted(name for name in files if name != manifest.NAME)
-            else:
-                names = self.storage.list(item)  # archived before file records existed
-            for name in names:
+            # The record is rebuilt from the catalog: always current, and sized without a storage call.
+            record = manifest.render(item, written_at)
+            self.entries.append(Entry(f"{root}/{FOLDER}/{item['id']}/{manifest.NAME}", len(record), data=record, crc=zlib.crc32(record)))
+            digest.update(record)
+            for name in sorted(name for name in files if name != manifest.NAME):
                 known = files.get(name) or {}
                 size = known.get("size")
                 if size is None:

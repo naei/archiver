@@ -1,14 +1,16 @@
 """Public Instagram posts, read as a logged-out visitor through yt-dlp's Instagram extractor.
 
-Instagram limits anonymous visits: periodic checks would risk blocking actual
-archiving, so its originals are not checked."""
+Instagram answers a visitor the same way for a deleted post and for one it
+does not show without an account: an original is known to be online when it
+can still be read, and nothing tells when it is gone."""
 import re
 from datetime import datetime, timezone
 
 from yt_dlp.extractor.instagram import InstagramIE
+from yt_dlp.utils import YoutubeDLError
 
 from .. import ytdlp
-from . import NO_MEDIA, WRONG_LINK, code
+from . import NO_MEDIA, ONLINE, UNKNOWN, WRONG_LINK, code
 from . import UNAVAILABLE as NOT_SHOWN
 
 
@@ -22,7 +24,7 @@ HOSTS = ("instagram.com", "www.instagram.com", "m.instagram.com")
 def fetch_post(session, shortcode):
     """(raw post data, yt-dlp result) for a public post."""
     # Photo-only posts end with a "no video" error; the captured data is what matters.
-    product, info, _ = session.capture(InstagramIE, "_extract_product", f"https://www.instagram.com/p/{shortcode}/")
+    product, info = session.capture(InstagramIE, "_extract_product", f"https://www.instagram.com/p/{shortcode}/")
     if not isinstance(product, dict) or product.get("code") != shortcode:
         raise RuntimeError(UNAVAILABLE)
     if (product.get("user") or {}).get("is_private"):
@@ -68,7 +70,10 @@ def post_details(product, info):
 
 
 def link(parsed):
-    if (parsed.hostname or "").lower() not in HOSTS:
+    host = (parsed.hostname or "").lower()
+    if host == "instagr.am" or host.endswith(".instagr.am"):
+        raise ValueError(WRONG_LINK.format(platform=NAME))  # a short link: where it leads is not known
+    if host not in HOSTS:
         return None
     match = re.fullmatch(r"/(?:[a-zA-Z0-9_.]{1,30}/)?(?:p|reels?|tv)/([a-zA-Z0-9_-]{5,64})/?", parsed.path)
     if not match:
@@ -81,3 +86,12 @@ def archive(item, worker):
         product, info = fetch_post(session, code(item, "ig-"))
         post = post_details(product, info)
         worker.archive_posts(item, [post], {"source": "instagram", "post": product}, worker.social_fetcher(session))
+
+
+def online(item, worker):
+    try:
+        with ytdlp.Session(worker.stopping) as session:
+            fetch_post(session, code(item, "ig-"))
+    except (RuntimeError, ValueError, YoutubeDLError):
+        return UNKNOWN
+    return ONLINE

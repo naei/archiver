@@ -50,10 +50,28 @@ def render(item, written_at=None):
 
 
 def publish(store, storage, media_id):
-    """Rewrite archive.json after the catalog changed (tags, note, checks)."""
-    item = store.get(media_id)
-    if item and item["status"] == "ready" and item["files"]:
-        storage.put(item, NAME, render(item))
+    """Rewrite archive.json after the catalog changed (tags, note, file records).
+
+    It is written again until it holds what the catalog says once written: another change, or a conversion
+    by `run.py encrypt` in another process, may happen meanwhile and its own writing may land first."""
+    for _ in range(10):
+        item = store.get(media_id)
+        if not (item and item["status"] == "ready" and item["files"]):
+            return
+        try:
+            storage.put(item, NAME, render(item))
+            missing = None
+        except FileNotFoundError as error:
+            missing = error  # on a local disk, the folder of a form that a conversion just removed
+        latest = store.get(media_id)
+        if latest == item:
+            break
+        if latest and latest["encrypted"] != item["encrypted"]:
+            storage.prune(latest)  # converted meanwhile: this record went to the form that was being removed
+    else:
+        raise RuntimeError("archive.json could not be synchronized after 10 attempts. Stop editing this archive and retry.")
+    if missing:
+        raise missing
 
 
 def restore(store, storage):

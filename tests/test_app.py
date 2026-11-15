@@ -19,194 +19,23 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import urlparse
 
-from archiver import availability, crypto, i18n, manifest, net, proxy, relay
-from archiver.integrations import bilibili, bluesky, mastodon, reddit, tiktok, x
+from archiver import availability, crypto, i18n, integrations, manifest, net, proxy, relay
+from archiver.integrations import tiktok
 from archiver.integrations.youtube import youtube_url
-from archiver.downloader import Downloader, excerpt, subtitle_choices
+from archiver.downloader import WARNINGS, Downloader, excerpt, subtitle_choices
 from archiver import viewer
-from archiver.integrations.instagram import best_image, fetch_post, post_details
 from archiver.maintenance import Maintenance
 from archiver.server import AppServer, byte_range
 from archiver.storage import Storage
-from archiver.store import Store, clean_tags, source_url
+from archiver.store import Store, clean_tags, now, source_url
 from archiver.web import extract, feed_entry, render
-from archiver.integrations.x import cdn_url, original_photo, page_detail, page_post, page_posts, syndication_post, thread
+from archiver.integrations.x import syndication_post
+from tests.fixtures import POST_ID, POST_URL, VIDEO_ID, VIDEO_URL, x_post
 
 
-VIDEO_ID = "jNQXAC9IVRw"
-VIDEO_URL = f"https://www.youtube.com/watch?v={VIDEO_ID}"
-POST_ID = "894001459754180609"
-POST_URL = f"https://x.com/perrypumas/status/{POST_ID}"
 PASSWORD = "correct horse battery"
 
-
-def x_post(**overrides):
-    post = {
-        "id_str": POST_ID, "created_at": "2017-08-06T01:05:32.000Z",
-        "text": "Merci &amp; bravo https://t.co/link https://t.co/media",
-        "entities": {
-            "urls": [{"url": "https://t.co/link", "expanded_url": "https://example.org/page"}],
-            "media": [{"url": "https://t.co/media"}],
-        },
-        "user": {"name": "Perry", "screen_name": "perrypumas"},
-        "mediaDetails": [
-            {"type": "photo", "media_url_https": "https://pbs.twimg.com/media/abc.jpg",
-             "original_info": {"width": 2048, "height": 1536}, "ext_alt_text": "Une équipe"},
-            {"type": "video", "video_info": {"duration_millis": 4500, "variants": [
-                {"content_type": "application/x-mpegURL", "url": "https://video.twimg.com/a.m3u8"},
-                {"content_type": "video/mp4", "bitrate": 256000, "url": "https://video.twimg.com/low.mp4"},
-                {"content_type": "video/mp4", "bitrate": 2176000, "url": "https://video.twimg.com/high.mp4"},
-            ]}},
-        ],
-    }
-    post.update(overrides)
-    return post
-
-
-def page_tweet(post_id, text="Texte", user="10", handle="auteur", reply_to=None, reply_to_user=None, **extra):
-    """A post in the format of the logged-out x.com page data."""
-    tweet = {
-        "__typename": "Tweet", "rest_id": post_id,
-        "core": {"user_results": {"result": {"rest_id": user, "core": {"name": handle.title(), "screen_name": handle}}}},
-        "details": {"created_at_ms": 1740167696000, "full_text": text},
-        "url_entities": [], "media_entities2": [],
-    }
-    if reply_to:
-        tweet["reply_to_results"] = {"rest_id": reply_to}
-        tweet["reply_to_user_results"] = {"rest_id": reply_to_user or user}
-    tweet.update(extra)
-    return tweet
-
-
-def page_html(focal, *conversation):
-    data = {"data": {
-        "tweet_result_by_rest_id": {"result": focal},
-        "threaded_conversation_with_injections_v2": {"instructions": [{"entries": [
-            {"content": {"items": [{"item": {"content": {"tweet_results": {"result": tweet}}}}]}} for tweet in conversation
-        ]}]},
-    }}
-    key = json.dumps('abc{"x":1}')
-    return (f'<script>($R=>$R[33].next($R[35]={{kind:"GraphQLRequestStream.Started",requestId:1,key:{key},name:"TweetDetail"}}))</script>'
-            f'<script>($R=>$R[33].next($R[39]={{kind:"GraphQLRequestStream.Completed",requestId:1,key:{key},'
-            f'result:$R[40]={{kind:"Result.Ok",value:{json.dumps(json.dumps(data))}}}}}))</script>')
-
-
-def chain(*posts):
-    return {post["id"]: post for post in map(page_post, posts)}
-
-
-class XTests(unittest.TestCase):
-    def test_embed_post_metadata_and_best_media(self):
-        post = syndication_post(x_post(), POST_ID)
-        self.assertEqual(post["text"], "Merci & bravo https://example.org/page")
-        self.assertEqual(post["author"], "Perry")
-        self.assertEqual(post["published_at"], "2017-08-06T01:05:32+00:00")
-        self.assertEqual(post["url"], POST_URL)
-        self.assertEqual(post["assets"][0]["source_url"], "https://pbs.twimg.com/media/abc?format=jpg&name=orig")
-        self.assertEqual(post["assets"][0]["alt_text"], "Une équipe")
-        self.assertEqual(post["assets"][1]["source_url"], "https://video.twimg.com/high.mp4")
-        self.assertEqual(post["assets"][1]["duration"], 4.5)
-
-    def test_embed_text_only_and_long_posts(self):
-        self.assertEqual(syndication_post(x_post(mediaDetails=[]), POST_ID)["assets"], [])
-        note = {"text": "Texte complet https://t.co/long", "entity_set": {
-            "urls": [{"url": "https://t.co/long", "expanded_url": "https://example.org/long"}]}}
-        post = x_post(note_tweet={"id": "abc", "note_tweet_results": {"result": note}})
-        self.assertEqual(syndication_post(post, POST_ID)["text"], "Texte complet https://example.org/long")
-        text = syndication_post(x_post(note_tweet={"id": "abc"}), POST_ID)["text"]
-        self.assertTrue(text.startswith("Merci & bravo https://example.org/page […]"))
-        self.assertIn("excerpt", text)
-
-    def test_rejects_unavailable_posts_and_foreign_media_hosts(self):
-        for post in ({}, x_post(id_str="1"), x_post(mediaDetails=[{"type": "poll"}])):
-            with self.subTest(post=post), self.assertRaises(ValueError):
-                syndication_post(post, POST_ID)
-        for url in ("http://pbs.twimg.com/a.jpg", "https://evil.test/a.mp4", "https://video.twimg.com:8443/a.mp4"):
-            with self.subTest(url=url), self.assertRaises(ValueError):
-                cdn_url(url)
-        with self.assertRaises(ValueError):
-            original_photo("https://video.twimg.com/a.jpg")
-
-    def test_page_post_text_media_and_quote(self):
-        quoted = page_tweet("5", "Post cité", user="20", handle="autre")
-        raw = page_tweet(
-            "1", "Lire https://t.co/link &amp; voir https://t.co/media",
-            url_entities=[{"url": "https://t.co/link", "expanded_url": "https://example.org"}],
-            media_entities2=[{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/p.png"}],
-            quoted_tweet_results={"result": quoted},
-        )
-        post = page_post(raw)
-        self.assertEqual(post["text"], "Lire https://example.org & voir")
-        self.assertEqual(post["published_at"], "2025-02-21T19:54:56+00:00")
-        self.assertEqual(post["url"], "https://x.com/auteur/status/1")
-        self.assertEqual(post["assets"][0]["source_url"], "https://pbs.twimg.com/media/p?format=png&name=orig")
-        self.assertEqual(post["quote"], {"author": "Autre", "handle": "autre", "text": "Post cité", "url": "https://x.com/autre/status/5", "assets": []})
-        note = {"text": "Texte long complet", "entity_set": {"urls": []}}
-        self.assertEqual(page_post(page_tweet("2", "Texte long…", note_tweet={"note_tweet_results": {"result": note}}))["text"], "Texte long complet")
-
-    def test_quoted_post_media_are_collected(self):
-        video = x_post()["mediaDetails"][1]
-        quoted = page_tweet("5", "Post cité https://t.co/v", user="20", handle="autre", media_entities2=[video])
-        quote = page_post(page_tweet("1", "Regardez", quoted_tweet_results={"result": quoted}))["quote"]
-        self.assertEqual(quote["text"], "Post cité")
-        self.assertEqual([asset["source_url"] for asset in quote["assets"]], ["https://video.twimg.com/high.mp4"])
-        embed = x_post(mediaDetails=[], quoted_tweet={"id_str": "5", "text": "Post cité", "user": {"name": "Autre", "screen_name": "autre"},
-                                                      "mediaDetails": [video]})
-        post = syndication_post(embed, POST_ID)
-        self.assertEqual((post["assets"], [asset["duration"] for asset in post["quote"]["assets"]]), ([], [4.5]))
-        # Media X offers in an unsupported form leave the quote with its text, and the post archivable.
-        quoted["media_entities2"] = [{"type": "poll"}]
-        quote = page_post(page_tweet("1", "Regardez", quoted_tweet_results={"result": quoted}))["quote"]
-        self.assertEqual((quote["text"], quote["assets"]), ("Post cité", []))
-
-    def test_titles_are_cut_between_words(self):
-        self.assertEqual(excerpt("Court"), "Court")
-        self.assertEqual(excerpt("Un  texte\nassez long pour être coupé", 20), "Un texte assez long…")
-        self.assertEqual(excerpt("x" * 30, 10), "x" * 10 + "…")
-
-    def test_page_detail_and_unavailable_or_protected_posts(self):
-        focal = page_tweet("1", "Premier")
-        posts = page_posts(page_detail(page_html(focal, focal, page_tweet("2", "Suite", reply_to="1"))), "1")
-        self.assertEqual(sorted(posts), ["1", "2"])
-        # The focal copy may lack the reply link that the conversation copy has.
-        focal = page_tweet("2", "Suite")
-        posts = page_posts(page_detail(page_html(focal, page_tweet("2", "Suite", reply_to="1"))), "2")
-        self.assertEqual(posts["2"]["reply_to"], "1")
-        with self.assertRaises(ValueError):
-            page_detail("<html>sans données</html>")
-        with self.assertRaises(ValueError):
-            page_posts(page_detail(page_html({"__typename": "TweetTombstone"})), "1")
-        protected = page_tweet("1")
-        protected["core"]["user_results"]["result"]["privacy"] = {"protected": True}
-        with self.assertRaises(ValueError):
-            page_posts(page_detail(page_html(protected, protected)), "1")
-
-    def test_thread_follows_author_self_replies_only(self):
-        known = chain(
-            page_tweet("1", "Début"), page_tweet("2", "Deux", reply_to="1"), page_tweet("3", "Trois", reply_to="2"),
-            page_tweet("4", "Réponse parallèle de l’auteur", reply_to="1"),
-            page_tweet("5", "Réponse d’un autre", user="20", handle="autre", reply_to="3", reply_to_user="10"),
-        )
-        fetched = []
-        posts = thread(known["2"], known, lambda post_id: fetched.append(post_id) or {})
-        self.assertEqual([post["id"] for post in posts], ["1", "2", "3"])
-        self.assertEqual(fetched, ["3"])  # one check for continuations after the last post
-
-    def test_thread_fills_gaps_from_other_pages(self):
-        known = chain(page_tweet("1", "Début"), page_tweet("2", "Deux", reply_to="1"), page_tweet("4", "Quatre", reply_to="3"))
-        pages = {"3": chain(page_tweet("3", "Trois", reply_to="2"), page_tweet("4", "Quatre", reply_to="3")),
-                 "4": chain(page_tweet("4", "Quatre", reply_to="3"), page_tweet("5", "Cinq", reply_to="4"))}
-        posts = thread(known["1"], known, lambda post_id: pages.get(post_id, {}))
-        self.assertEqual([post["id"] for post in posts], ["1", "2", "3", "4", "5"])
-
-    def test_thread_stops_at_replies_to_other_accounts_and_on_failed_pages(self):
-        known = chain(page_tweet("9", "Post d’un autre", user="20", handle="autre"),
-                      page_tweet("10", "Réponse", reply_to="9", reply_to_user="20"))
-        self.assertEqual([post["id"] for post in thread(known["10"], known, lambda post_id: {})], ["10"])
-        known = chain(page_tweet("2", "Deux", reply_to="1"))
-        self.assertEqual([post["id"] for post in thread(known["2"], known, lambda post_id: {})], ["2"])
 
 class ValidationTests(unittest.TestCase):
     def test_supported_urls_canonicalize_to_same_video(self):
@@ -222,7 +51,7 @@ class ValidationTests(unittest.TestCase):
         for url in (
             "https://example.com/video", "https://youtube.com.evil.test/watch?v=" + VIDEO_ID,
             "http://127.0.0.1/internal", "file:///etc/passwd", "--exec=bad",
-            "https://youtube.com/playlist?list=abc", "https://youtube.com/@channel",
+            "https://youtube.com/playlist?list=abc", "https://youtube.com/@example",
             "https://youtube.com/watch?v=../secret", None, 123,
             "https://youtube.com:9000/watch?v=" + VIDEO_ID,
             "https://username@youtube.com/watch?v=" + VIDEO_ID,
@@ -232,17 +61,24 @@ class ValidationTests(unittest.TestCase):
 
     def test_x_post_urls_canonicalize_to_same_post(self):
         for url in (
-            POST_URL, f"https://twitter.com/perrypumas/status/{POST_ID}/photo/2", f"x.com/i/status/{POST_ID}?s=20",
-            f"https://mobile.twitter.com/i/web/status/{POST_ID}", f"https://x.com/perrypumas/status/{POST_ID}/video/1",
+            POST_URL, f"https://twitter.com/example/status/{POST_ID}/photo/2", f"x.com/i/status/{POST_ID}?s=20",
+            f"https://mobile.twitter.com/i/web/status/{POST_ID}", f"https://x.com/example/status/{POST_ID}/video/1",
         ):
             with self.subTest(url=url):
                 self.assertEqual(source_url(url), (f"x-{POST_ID}", f"https://x.com/i/status/{POST_ID}", "X"))
-        for url in ("https://x.com/perrypumas", "https://x.com/a/status/abc", f"https://x.com/perrypumas/status/{POST_ID}/photo/5"):
+        for url in ("https://x.com/example", "https://x.com/a/status/abc", f"https://x.com/example/status/{POST_ID}/photo/5"):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 source_url(url)
 
+    def test_titles_are_cut_between_words(self):
+        self.assertEqual(excerpt("Court"), "Court")
+        self.assertEqual(excerpt("Un  texte\nassez long pour être coupé", 20), "Un texte assez long…")
+        self.assertEqual(excerpt("x" * 30, 10), "x" * 10 + "…")
+
     def test_tags_normalize_and_deduplicate(self):
         self.assertEqual(clean_tags(["  Design  ", "design", "un   tag", ""]), ["design", "un tag"])
+        # The private tag is stored under one name.
+        self.assertEqual(clean_tags(["Privé", "PRIVATE", "prive", "privée"]), ["private", "privée"])
         for tags in ("tag", [123], ["x" * 41], ["a"] * 31):
             with self.subTest(tags=tags), self.assertRaises(ValueError):
                 clean_tags(tags)
@@ -319,636 +155,6 @@ def rss(link, content=None):
             f'<media:content url="/une.png" medium="image"/></item></channel></rss>').encode()
 
 
-def instagram_image(name, size=None):
-    stp = f"dst-jpg_e35_s{size}x{size}_tt6" if size else "dst-jpg_e35_tt6"
-    return {"url": f"https://scontent.cdninstagram.com/v/{name}.jpg?stp={stp}&oh=1"}
-
-
-class InstagramTests(unittest.TestCase):
-    def test_post_and_reel_urls(self):
-        for url in ("https://www.instagram.com/p/BsOGulcndj-/", "instagram.com/reel/BsOGulcndj-?igsh=abc",
-                    "https://www.instagram.com/reels/BsOGulcndj-/", "https://www.instagram.com/tv/BsOGulcndj-",
-                    "https://www.instagram.com/world_record_egg/p/BsOGulcndj-/"):
-            with self.subTest(url=url):
-                self.assertEqual(source_url(url), ("ig-BsOGulcndj-", "https://www.instagram.com/p/BsOGulcndj-/", "Instagram"))
-        for url in ("https://www.instagram.com/world_record_egg/", "https://www.instagram.com/stories/egg/123/",
-                    "https://www.instagram.com/p/abc/", "https://instagr.am/p/BsOGulcndj-/"):
-            with self.subTest(url=url), self.assertRaises(ValueError):
-                source_url(url)
-
-    def test_full_size_photo_is_preferred(self):
-        media = {"image_versions2": {"candidates": [instagram_image("a", 480), instagram_image("a"), instagram_image("a", 150)]}}
-        self.assertNotIn("s480x480", best_image(media))
-        self.assertIn("s150x150", best_image({"image_versions2": {"candidates": [instagram_image("a", 150)]}}))
-
-    def test_carousel_items_match_yt_dlp_entries(self):
-        product = {
-            "code": "ABCDEF", "taken_at": 1546621545, "caption": {"text": " Légende "},
-            "user": {"username": "compte", "full_name": "Le Compte"},
-            "carousel_media": [
-                {"media_type": 1, "image_versions2": {"candidates": [instagram_image("p")]}, "accessibility_caption": "Une photo",
-                 "original_width": 1080, "original_height": 1350},
-                {"media_type": 2, "original_width": 720, "original_height": 1280},
-            ],
-        }
-        info = {"_type": "playlist", "entries": [{"id": "1"}, {"id": "2", "formats": [{"url": "https://cdn/v.mp4"}]}]}
-        post = post_details(product, info)
-        self.assertEqual((post["author"], post["handle"], post["text"]), ("Le Compte", "compte", "Légende"))
-        self.assertEqual(post["published_at"], "2019-01-04T17:05:45+00:00")
-        self.assertEqual(post["url"], "https://www.instagram.com/p/ABCDEF/")
-        self.assertEqual([asset["type"] for asset in post["assets"]], ["image", "video"])
-        self.assertEqual(post["assets"][0]["alt_text"], "Une photo")
-        self.assertEqual(post["assets"][1]["entry"]["id"], "2")
-        with self.assertRaises(RuntimeError):
-            post_details({**product, "carousel_media": [{"media_type": 2}]}, info={"_type": "playlist", "entries": [{"id": "1"}]})
-
-    def test_private_or_mismatched_posts_are_refused(self):
-        for product in ({"code": "ABCDEF", "user": {"is_private": True}}, {"code": "AUTRE", "user": {}}, None):
-            session = unittest.mock.Mock(capture=unittest.mock.Mock(return_value=(product, None, None)))
-            with self.subTest(product=product), self.assertRaises(RuntimeError):
-                fetch_post(session, "ABCDEF")
-
-
-class TikTokFacebookTests(unittest.TestCase):
-    def test_tiktok_urls(self):
-        video = ("tt-7047596209028074758", "https://www.tiktok.com/@hankgreen1/video/7047596209028074758", "TikTok")
-        self.assertEqual(source_url("https://www.tiktok.com/@hankgreen1/video/7047596209028074758?lang=fr"), video)
-        self.assertEqual(source_url("https://m.tiktok.com/@hankgreen1/video/7047596209028074758/")[0], video[0])
-        self.assertEqual(source_url("https://www.tiktok.com/embed/v2/7047596209028074758")[0], video[0])
-        self.assertEqual(source_url("https://www.tiktok.com/@a.b/photo/7047596209028074758")[1], "https://www.tiktok.com/@a.b/photo/7047596209028074758")
-        self.assertEqual(source_url("https://vm.tiktok.com/ZTR45GpSF/"), ("tt-ZTR45GpSF", "https://vm.tiktok.com/ZTR45GpSF/", "TikTok"))
-        self.assertEqual(source_url("https://www.tiktok.com/t/ZTR45GpSF")[0], "tt-ZTR45GpSF")
-        for url in ("https://www.tiktok.com/@hankgreen1", "https://www.tiktok.com/@hankgreen1/live", "https://www.tiktok.com/tag/chat"):
-            with self.subTest(url=url), self.assertRaises(ValueError):
-                source_url(url)
-
-    def test_facebook_video_urls_only(self):
-        for url, expected in (
-            ("https://www.facebook.com/cnn/videos/10155529876156509/", ("fb-10155529876156509", "https://www.facebook.com/watch/?v=10155529876156509")),
-            ("https://www.facebook.com/ChristyClarkForBC/videos/vb.22819070941/10153870694020942/?type=2", ("fb-10153870694020942", "https://www.facebook.com/watch/?v=10153870694020942")),
-            ("https://m.facebook.com/watch/?v=647537299265662", ("fb-647537299265662", "https://www.facebook.com/watch/?v=647537299265662")),
-            ("https://www.facebook.com/video.php?v=274175099429670", ("fb-274175099429670", "https://www.facebook.com/watch/?v=274175099429670")),
-            ("https://www.facebook.com/reel/1195289147628387", ("fb-1195289147628387", "https://www.facebook.com/reel/1195289147628387")),
-            ("https://fb.watch/aLeV-PDAHP/", ("fb-aLeV-PDAHP", "https://fb.watch/aLeV-PDAHP/")),
-            ("https://www.facebook.com/share/v/1JnoHkKNKR/", ("fb-1JnoHkKNKR", "https://www.facebook.com/share/v/1JnoHkKNKR/")),
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(source_url(url), (*expected, "Facebook"))
-        for url in ("https://www.facebook.com/barackobama/posts/10153664894881749", "https://www.facebook.com/groups/1/permalink/2/",
-                    "https://www.facebook.com/photo/?fbid=123456", "https://www.facebook.com/cnn"):
-            with self.subTest(url=url), self.assertRaises(ValueError):
-                source_url(url)
-
-    def test_tiktok_video_and_photo_posts(self):
-        raw = {"id": "70", "desc": " Légende ", "createTime": "1640896362", "author": {"uniqueId": "hank", "nickname": "Hank"},
-               "video": {"width": 576, "height": 1024, "duration": 21, "playAddr": "https://v16.tiktok.com/play.mp4",
-                         "bitrateInfo": [{"Bitrate": 800, "PlayAddr": {"UrlList": ["https://v16.tiktok.com/low.mp4"]}},
-                                         {"Bitrate": 1900, "PlayAddr": {"UrlList": ["https://v16.tiktok.com/high.mp4"]}}]}}
-        post = tiktok.post_details(raw)
-        self.assertEqual((post["author"], post["text"], post["url"]), ("Hank", "Légende", "https://www.tiktok.com/@hank/video/70"))
-        self.assertEqual(post["published_at"], "2021-12-30T20:32:42+00:00")
-        self.assertEqual(post["assets"][0]["source_urls"], ["https://v16.tiktok.com/high.mp4", "https://v16.tiktok.com/low.mp4",
-                                                            "https://v16.tiktok.com/play.mp4"])
-        with self.assertRaises(RuntimeError):
-            tiktok.post_details({**raw, "video": {}})
-        images = {"images": [{"imageWidth": 1080, "imageHeight": 1440, "imageURL": {"urlList": [
-            "https://p16.tiktokcdn.com/a.heic", "https://p16.tiktokcdn.com/a.jpeg"]}}]}
-        post = tiktok.post_details({**raw, "imagePost": images})
-        self.assertEqual(post["url"], "https://www.tiktok.com/@hank/photo/70")
-        self.assertEqual(post["assets"][0]["source_urls"][0], "https://p16.tiktokcdn.com/a.jpeg")
-
-    def test_tiktok_page_data_and_refusals(self):
-        def page(status=0, item=None):
-            detail = {"statusCode": status, "itemInfo": {"itemStruct": item}} if item is not None else {"statusCode": status}
-            data = json.dumps({"__DEFAULT_SCOPE__": {"webapp.video-detail": detail}})
-            return f'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">{data}</script>'
-        self.assertEqual(tiktok.page_item(page(item={"id": "70"}), "70"), {"id": "70"})
-        self.assertIsNone(tiktok.page_item(page(item={"id": "71"}), "70"))
-        self.assertIsNone(tiktok.page_item("<html>sans données</html>", "70"))
-        for status, message in ((10222, "private"), (10204, "deleted")):
-            with self.subTest(status=status), self.assertRaises(RuntimeError) as raised:
-                tiktok.page_item(page(status=status), "70")
-            self.assertIn(message, str(raised.exception))
-        private = net.Response("https://www.tiktok.com/", "text/html", page(item={"id": "70", "author": {"privateAccount": True}}).encode(), {})
-        with patch("archiver.net.fetch", return_value=private), self.assertRaises(RuntimeError):
-            tiktok.fetch_post("70")
-
-    def test_tiktok_cookies_only_go_to_tiktok_hosts(self):
-        cookies = {"tt_chain_token": "abc", "ttwid": "1"}
-        self.assertEqual(tiktok.media_headers("https://v16-webapp-prime.tiktok.com/video/x", cookies)["Cookie"], "tt_chain_token=abc; ttwid=1")
-        self.assertNotIn("Cookie", tiktok.media_headers("https://p16-sign.tiktokcdn-us.com/a.jpeg", cookies))
-        self.assertNotIn("Cookie", tiktok.media_headers("https://eviltiktok.com/x", cookies))
-
-    def test_facebook_titles_lose_engagement_counts(self):
-        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STORAGE_BACKEND": "local"}):
-            store = Store(temp)
-            item, _ = store.add("https://www.facebook.com/reel/1195289147628387", [])
-            info = Path(temp) / "info.json"
-            info.write_text(json.dumps({"title": "9.9K views · 341 reactions | Un reel | Avec une barre", "uploader": "Page"}))
-            Downloader(store, Storage(temp)).read_info(item["id"], info)
-            self.assertEqual(store.get(item["id"])["title"], "Un reel | Avec une barre")
-
-
-class BilibiliTests(unittest.TestCase):
-    VIEW = {"bvid": "BV1JB4y1c73K", "title": "Concerts", "desc": " Tous les concerts ", "pubdate": 1619921827,
-            "pic": "http://i0.hdslb.com/bfs/archive/cover.png", "owner": {"name": "Auteur"}, "duration": 60000,
-            "pages": [{"page": 1, "cid": 10, "part": "Premier", "duration": 100},
-                      {"page": 44, "cid": 440, "part": "AOL Sessions", "duration": 1342}]}
-    PLAY = {"dash": {"video": [{"id": 80, "codecid": 7, "codecs": "avc1.640032", "width": 1920, "height": 1080,
-                                "frameRate": "29.970", "bandwidth": 2000000, "baseUrl": "https://upos.bilivideo.com/v.m4s"}],
-                     "audio": [{"id": 30280, "codecs": "mp4a.40.2", "bandwidth": 320000, "baseUrl": "https://upos.bilivideo.com/a.m4s"}]}}
-
-    def test_video_urls_keep_their_part(self):
-        for url, expected in (
-            ("https://www.bilibili.com/zh-Hans/video/BV1JB4y1c73K/?p=44",
-             ("bili-BV1JB4y1c73K-p44", "https://www.bilibili.com/video/BV1JB4y1c73K/?p=44")),
-            ("https://m.bilibili.com/video/BV1JB4y1c73K?p=44&spm_id_from=333.788",
-             ("bili-BV1JB4y1c73K-p44", "https://www.bilibili.com/video/BV1JB4y1c73K/?p=44")),
-            ("bilibili.com/video/bv1JB4y1c73K?p=1", ("bili-BV1JB4y1c73K", "https://www.bilibili.com/video/BV1JB4y1c73K/")),
-            ("https://www.bilibili.com/video/BV1JB4y1c73K/?p=abc", ("bili-BV1JB4y1c73K", "https://www.bilibili.com/video/BV1JB4y1c73K/")),
-            ("https://www.bilibili.com/video/av587764179/?p=3", ("bili-av587764179-p3", "https://www.bilibili.com/video/av587764179/?p=3")),
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(source_url(url), (*expected, "Bilibili"))
-        self.assertEqual(bilibili.parse("bili-BV1JB4y1c73K-p44"), ("BV1JB4y1c73K", 44))
-        self.assertEqual(bilibili.parse("bili-av587764179"), ("av587764179", 1))
-        for url in ("https://www.bilibili.com/", "https://space.bilibili.com/4409708", "https://live.bilibili.com/1",
-                    "https://www.bilibili.com/bangumi/play/ep1", "https://www.bilibili.com/video/BV0OOOOOOOOO/", "https://b23.tv/abcdef"):
-            with self.subTest(url=url), self.assertRaises(ValueError):
-                source_url(url)
-
-    def test_part_details_and_streams(self):
-        video = bilibili.video_details(self.VIEW, self.VIEW["pages"][1], self.PLAY, "https://www.bilibili.com/video/BV1JB4y1c73K/?p=44")
-        self.assertEqual((video["title"], video["author"], video["description"], video["duration"]),
-                         ("AOL Sessions – Concerts", "Auteur", "Tous les concerts", 1342))
-        self.assertEqual(video["published_at"], "2021-05-02T02:17:07+00:00")
-        self.assertEqual(video["cover"], "https://i0.hdslb.com/bfs/archive/cover.png")
-        entry = video["entry"]
-        self.assertEqual(entry["id"], "BV1JB4y1c73K_p44")
-        self.assertEqual(entry["http_headers"]["Referer"], "https://www.bilibili.com/")
-        self.assertNotIn("Mozilla", entry["http_headers"]["User-Agent"])
-        streams = {stream["format_id"]: stream for stream in entry["formats"]}
-        self.assertEqual((streams["video-80-7"]["height"], streams["video-80-7"]["acodec"]), (1080, "none"))
-        self.assertEqual(streams["audio-30280"]["vcodec"], "none")
-        single = bilibili.video_details({**self.VIEW, "pages": self.VIEW["pages"][:1]}, self.VIEW["pages"][0], self.PLAY, "")
-        self.assertEqual(single["title"], "Concerts")
-        old = bilibili.formats({"quality": 64, "durl": [{"url": "https://upos.bilivideo.com/v.flv?e=1"}]})
-        self.assertEqual([(stream["format_id"], stream["ext"]) for stream in old], [("file-64", "flv")])
-        with self.assertRaises(RuntimeError):
-            bilibili.video_details(self.VIEW, self.VIEW["pages"][0], {"dash": {}}, "")
-
-    def test_api_answers(self):
-        def answer(data):
-            return net.Response("", "application/json", json.dumps(data).encode(), {})
-        with patch("archiver.net.fetch", side_effect=[answer({"code": 0, "data": self.VIEW}), answer({"code": 0, "data": self.PLAY})]) as fetch:
-            view, page, play = bilibili.fetch_video("BV1JB4y1c73K", 44)
-        self.assertEqual((page["cid"], play), (440, self.PLAY))
-        self.assertIn("bvid=BV1JB4y1c73K&cid=440", fetch.call_args_list[1][0][0])
-        with patch("archiver.net.fetch", return_value=answer({"code": 0, "data": self.VIEW})), self.assertRaises(RuntimeError) as raised:
-            bilibili.fetch_video("BV1JB4y1c73K", 45)
-        self.assertIn("part 45", str(raised.exception))
-        with patch("archiver.net.fetch", return_value=answer({"code": -404})), self.assertRaises(bilibili.Gone):
-            bilibili.video("av1")
-        with patch("archiver.net.fetch", return_value=answer({"code": -352, "message": "风控"})), self.assertRaises(bilibili.Refused):
-            bilibili.video("av1")
-        with patch("archiver.net.fetch", side_effect=net.HTTPStatus("refus", 412)), self.assertRaises(bilibili.Refused):
-            bilibili.video("av1")
-        with patch("archiver.net.fetch", return_value=answer({"code": 62002})), self.assertRaises(RuntimeError) as raised:
-            bilibili.video("av1")
-        self.assertNotIsInstance(raised.exception, bilibili.Gone)
-
-    def test_availability(self):
-        item = {"platform": "Bilibili", "id": "bili-BV1JB4y1c73K-p44.2", "source_url": ""}
-        for side_effect, expected in ((bilibili.Gone("supprimée"), availability.GONE), (RuntimeError("cachée"), availability.UNKNOWN),
-                                      (None, availability.ONLINE)):
-            with self.subTest(expected=expected), patch("archiver.integrations.bilibili.video", side_effect=side_effect) as video:
-                self.assertEqual(availability.check(item, None), expected)
-            video.assert_called_with("BV1JB4y1c73K")
-
-    def test_messages_are_translated(self):
-        for message in (bilibili.UNAVAILABLE, bilibili.DELETED, bilibili.NO_PART.format(part=45), bilibili.NO_STREAM):
-            with self.subTest(message=message):
-                self.assertNotEqual(i18n.translate(message, "fr"), message)
-        with self.assertRaises(ValueError) as raised:
-            source_url("https://space.bilibili.com/4409708")
-        self.assertNotEqual(i18n.translate(str(raised.exception), "fr"), str(raised.exception))
-
-
-def json_answer(data):
-    return net.Response("", "application/json", json.dumps(data).encode(), {})
-
-
-class IntegrationTests(unittest.TestCase):
-    def test_every_integration_follows_the_contract(self):
-        from archiver import integrations
-        from archiver.store import MEDIA_ID_PATTERN
-        self.assertEqual(len({module.NAME for module in integrations.ALL}), len(integrations.ALL))
-        for module in integrations.ALL:
-            with self.subTest(module=module.NAME):
-                self.assertTrue(callable(module.link) and callable(module.archive))
-                self.assertIs(integrations.find(module.NAME), module)
-                self.assertIsNone(module.link(urlparse("https://example.com/article")))
-                self.assertEqual(module.NAME in availability.CHECKED, hasattr(module, "online"))
-                # An integration has no text of its own: its messages are the shared ones, filled with its name.
-                self.assertFalse(hasattr(module, "MESSAGES"))
-        for template in (integrations.WRONG_LINK, integrations.DELETED, integrations.UNAVAILABLE, integrations.LIMITED, integrations.UNREADABLE,
-                         integrations.NO_MEDIA, integrations.EXPIRED, integrations.NOT_SERVER, integrations.NO_PART):
-            message = template.format(platform="Exemple", host="site.example", part=3)
-            for lang in i18n.CATALOGS:
-                with self.subTest(template=template, lang=lang):
-                    translated = i18n.translate(message, lang)
-                    self.assertNotEqual(translated, message)
-                    self.assertEqual("Exemple" in message, "Exemple" in translated)
-        self.assertIsNone(integrations.find("Web"))
-        for url, platform in (("https://bsky.app/profile/alice.example/post/3kabc", "Bluesky"),
-                              ("https://social.example/@alice/1123", "Mastodon"), (POST_URL, "X"), (VIDEO_URL, "YouTube"),
-                              ("https://www.reddit.com/r/pics/comments/abc12/title/def34/", "Reddit"),
-                              ("https://www.reddit.com/r/pics/s/AbCdEf1234", "Reddit")):
-            media_id, _, found = source_url(url)
-            self.assertEqual(found, platform)
-            self.assertTrue(re.fullmatch(MEDIA_ID_PATTERN, media_id + ".2"), media_id)
-
-
-class BlueskyTests(unittest.TestCase):
-    DID = "did:plc:alice"
-
-    def view(self, key, text="Bonjour", reply_count=0, embed=None, record_embed=None, did=None, labels=(), facets=None):
-        did = did or self.DID
-        return {"uri": f"at://{did}/app.bsky.feed.post/{key}", "replyCount": reply_count, "indexedAt": f"2026-01-0{key[-1]}T00:00:00Z",
-                "author": {"did": did, "handle": "alice.example", "displayName": "Alice", "labels": [{"val": label} for label in labels]},
-                "record": {"$type": "app.bsky.feed.post", "text": text, "createdAt": "2026-01-02T03:04:05.000Z",
-                           **({"embed": record_embed} if record_embed else {}), **({"facets": facets} if facets else {})},
-                **({"embed": embed} if embed else {})}
-
-    def node(self, view, parent=None, replies=None):
-        return {"$type": "app.bsky.feed.defs#threadViewPost", "post": view, **({"parent": parent} if parent else {}),
-                **({"replies": replies} if replies is not None else {})}
-
-    def test_post_links(self):
-        media_id, url, platform = source_url("bsky.app/profile/Alice.Example/post/3kabc/?ref=share")
-        self.assertEqual((url, platform), ("https://bsky.app/profile/Alice.Example/post/3kabc", "Bluesky"))
-        self.assertRegex(media_id, r"^bsky-[0-9a-f]{16}$")
-        self.assertEqual(source_url("https://bsky.app/profile/alice.example/post/3kabc")[0], media_id)
-        self.assertNotEqual(source_url("https://bsky.app/profile/bob.example/post/3kabc")[0], media_id)
-        # The usual key names the post by itself: the same archive under the account's handle or its identifier.
-        self.assertEqual(source_url("https://bsky.app/profile/alice.example/post/3n25midjy722x")[0], "bsky-3n25midjy722x")
-        self.assertEqual(source_url(f"https://bsky.app/profile/{self.DID}/post/3n25midjy722x")[0], "bsky-3n25midjy722x")
-        self.assertEqual(bluesky.address({"source_url": f"https://bsky.app/profile/{self.DID}/post/3kabc"}), (self.DID, "3kabc"))
-        for url in ("https://bsky.app/", "https://bsky.app/profile/alice.example", "https://bsky.app/profile/alice.example/feed/aaa"):
-            with self.subTest(url=url), self.assertRaises(ValueError):
-                source_url(url)
-
-    def test_text_keeps_full_links(self):
-        text = "Voir exemple.fr/un-tr… et ici"
-        start = len("Voir ".encode())
-        short = {"index": {"byteStart": start, "byteEnd": start + len("exemple.fr/un-tr…".encode())},
-                 "features": [{"$type": "app.bsky.richtext.facet#link", "uri": "https://exemple.fr/un-tres-long-lien"}]}
-        word = {"index": {"byteStart": len(text.encode()) - 3, "byteEnd": len(text.encode())},
-                "features": [{"$type": "app.bsky.richtext.facet#link", "uri": "https://ailleurs.example/"}]}
-        mention = {"index": {"byteStart": 0, "byteEnd": 4}, "features": [{"$type": "app.bsky.richtext.facet#mention", "did": "did:plc:x"}]}
-        record = {"text": text, "facets": [word, short, mention],
-                  "embed": {"$type": "app.bsky.embed.external", "external": {"uri": "https://carte.example/page"}}}
-        self.assertEqual(bluesky.post_text(record),
-                         "Voir https://exemple.fr/un-tres-long-lien et ici (https://ailleurs.example/)\n\nhttps://carte.example/page")
-        self.assertEqual(bluesky.post_text({"text": "https://carte.example/page", "embed": record["embed"]}), "https://carte.example/page")
-
-    def test_media_come_from_the_author_server(self):
-        blob = lambda cid: {"$type": "blob", "ref": {"$link": cid}, "mimeType": "image/jpeg"}
-        images = {"$type": "app.bsky.embed.images", "images": [
-            {"alt": "Un chat", "aspectRatio": {"width": 4, "height": 3}, "image": blob("cid1")}, {"image": {"cid": "old"}}]}
-        assets = bluesky.media_assets(images, self.DID, lambda did: "https://pds.example")
-        self.assertEqual([(a["type"], a["alt_text"], a["width"]) for a in assets], [("image", "Un chat", 4), ("image", "", None)])
-        self.assertEqual(assets[0]["source_urls"], [
-            "https://pds.example/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aalice&cid=cid1",
-            "https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:alice/cid1@jpeg"])
-        self.assertIn("cid=old", assets[1]["source_urls"][0])
-        gallery = {"$type": "app.bsky.embed.recordWithMedia", "media": {"$type": "app.bsky.embed.gallery", "items": [{"image": blob("g1")}]}}
-        self.assertEqual(len(bluesky.media_assets(gallery, self.DID, lambda did: None)[0]["source_urls"]), 1)
-        video = {"$type": "app.bsky.embed.video", "video": blob("v1"), "aspectRatio": {"width": 16, "height": 9}}
-        self.assertEqual(bluesky.media_assets(video, self.DID, lambda did: "https://pds.example")[0]["type"], "video")
-        with self.assertRaises(RuntimeError):
-            bluesky.media_assets(video, self.DID, lambda did: None)
-        self.assertEqual(bluesky.media_assets(None, self.DID, lambda did: None), [])
-
-    def test_data_server(self):
-        document = {"service": [{"id": "#other", "serviceEndpoint": "https://x.example"},
-                                {"id": "#atproto_pds", "type": "AtprotoPersonalDataServer", "serviceEndpoint": "https://pds.example/"}]}
-        with patch("archiver.net.fetch", return_value=json_answer(document)) as fetch:
-            self.assertEqual(bluesky.data_server("did:plc:alice"), "https://pds.example")
-            self.assertEqual(fetch.call_args[0][0], "https://plc.directory/did:plc:alice")
-            bluesky.data_server("did:web:alice.example")
-            self.assertEqual(fetch.call_args[0][0], "https://alice.example/.well-known/did.json")
-        with patch("archiver.net.fetch", side_effect=net.HTTPStatus("absent", 404)):
-            self.assertIsNone(bluesky.data_server("did:plc:alice"))
-        with patch("archiver.net.fetch", return_value=json_answer({"service": [{"id": "#atproto_pds", "serviceEndpoint": "http://pds.example"}]})):
-            self.assertIsNone(bluesky.data_server("did:plc:alice"))
-        self.assertIsNone(bluesky.data_server("did:other:alice"))
-
-    def test_post_details_and_quote(self):
-        quoted = {"$type": "app.bsky.embed.record#viewRecord", "uri": "at://did:plc:bob/app.bsky.feed.post/3kq",
-                  "author": {"did": "did:plc:bob", "handle": "bob.example", "displayName": "Bob"},
-                  "value": {"$type": "app.bsky.feed.post", "text": "Cité"}}
-        view = self.view("3ka", embed={"$type": "app.bsky.embed.record#view", "record": quoted})
-        post = bluesky.post_details(view, lambda did: None)
-        self.assertEqual((post["id"], post["url"], post["author"], post["handle"], post["published_at"], post["text"], post["assets"]),
-                         ("3ka", "https://bsky.app/profile/did:plc:alice/post/3ka", "Alice", "alice.example",
-                          "2026-01-02T03:04:05+00:00", "Bonjour", []))
-        self.assertEqual(post["quote"], {"author": "Bob", "handle": "bob.example", "text": "Cité",
-                                         "url": "https://bsky.app/profile/did:plc:bob/post/3kq", "published_at": None, "assets": []})
-        with_media = self.view("3ka", embed={"$type": "app.bsky.embed.recordWithMedia#view", "record": {"record": quoted}})
-        self.assertEqual(bluesky.post_details(with_media, lambda did: None)["quote"]["text"], "Cité")
-        for other in ({**quoted, "$type": "app.bsky.embed.record#viewNotFound"},
-                      {**quoted, "value": {"$type": "app.bsky.feed.generator"}}):
-            view = self.view("3ka", embed={"$type": "app.bsky.embed.record#view", "record": other})
-            self.assertIsNone(bluesky.post_details(view, lambda did: None)["quote"])
-
-    def test_thread_follows_the_author(self):
-        first, second, third = (self.view(f"3k{n}", reply_count=1) for n in (1, 2, 3))
-        fourth = self.view("3k4")
-        other = self.view("3k9", did="did:plc:bob")
-        side = self.view("3k8")
-        # Asked for the second post: its parent, then the earliest self-reply; the next one is beyond the answer's depth.
-        focal = self.node(second, parent=self.node(first, parent=self.node(other)),
-                          replies=[self.node(other), self.node(side), self.node(third)])
-        deeper = self.node(third, replies=[self.node(fourth, replies=[])])
-        with patch("archiver.net.fetch", side_effect=[json_answer({"thread": focal}), json_answer({"thread": deeper})]) as fetch:
-            views, answered = bluesky.fetch_thread("alice.example", "3k2")
-        self.assertEqual([view["uri"].rsplit("/", 1)[1] for view in views], ["3k1", "3k2", "3k3", "3k4"])
-        # The thread starts as an answer to someone else: that post is given apart.
-        self.assertEqual(answered["uri"], "at://did:plc:bob/app.bsky.feed.post/3k9")
-        self.assertIn("uri=at%3A%2F%2Falice.example%2Fapp.bsky.feed.post%2F3k2", fetch.call_args_list[0][0][0])
-        self.assertIn("3k3", fetch.call_args_list[1][0][0])
-        alone = self.node(self.view("3k1"), replies=[self.node(other)])
-        with patch("archiver.net.fetch", return_value=json_answer({"thread": alone})) as fetch:
-            self.assertEqual(bluesky.fetch_thread(self.DID, "3k1"), ([alone["post"]], None))
-        self.assertEqual(fetch.call_count, 1)
-
-    def test_unavailable_posts(self):
-        with patch("archiver.net.fetch", side_effect=net.HTTPStatus("absent", 400)), self.assertRaises(bluesky.Gone):
-            bluesky.fetch_thread(self.DID, "3k1")
-        missing = {"thread": {"$type": "app.bsky.feed.defs#notFoundPost", "notFound": True}}
-        with patch("archiver.net.fetch", return_value=json_answer(missing)), self.assertRaises(bluesky.Gone):
-            bluesky.fetch_thread(self.DID, "3k1")
-        blocked = {"thread": {"$type": "app.bsky.feed.defs#blockedPost"}}
-        with patch("archiver.net.fetch", return_value=json_answer(blocked)), self.assertRaises(RuntimeError) as raised:
-            bluesky.fetch_thread(self.DID, "3k1")
-        self.assertNotIsInstance(raised.exception, bluesky.Gone)
-        # What the API gives is archived: an author's wish to be shown to signed-in users only is not a refusal.
-        asked = {"thread": self.node(self.view("3k1", labels=["!no-unauthenticated"]))}
-        with patch("archiver.net.fetch", return_value=json_answer(asked)):
-            self.assertEqual(len(bluesky.fetch_thread(self.DID, "3k1")[0]), 1)
-        with patch("archiver.net.fetch", side_effect=net.Blocked("limite", 429)), self.assertRaises(RuntimeError) as raised:
-            bluesky.fetch_thread(self.DID, "3k1")
-        self.assertIn("temporarily limiting", str(raised.exception))
-
-    def test_availability(self):
-        item = {"platform": "Bluesky", "id": "bsky-0123456789abcdef", "source_url": f"https://bsky.app/profile/{self.DID}/post/3k1"}
-        for answer, expected in (({"posts": [{"uri": "at://…"}]}, availability.ONLINE), ({"posts": []}, availability.GONE),
-                                 ({}, availability.UNKNOWN)):
-            with self.subTest(expected=expected), patch("archiver.net.fetch", return_value=json_answer(answer)):
-                self.assertEqual(availability.check(item, None), expected)
-        with patch("archiver.net.fetch", side_effect=net.HTTPStatus("erreur", 500)):
-            self.assertEqual(availability.check(item, None), availability.UNKNOWN)
-        # A handle may have changed hands: no answer about it says the post is gone.
-        with patch("archiver.net.fetch", side_effect=AssertionError("not asked")):
-            self.assertEqual(availability.check({**item, "source_url": "https://bsky.app/profile/alice.example/post/3k1"}, None),
-                             availability.UNKNOWN)
-
-
-class MastodonTests(unittest.TestCase):
-    def status(self, status_id, content="<p>Bonjour</p>", author="7", reply_to=None, **extra):
-        return {"id": status_id, "created_at": f"2026-01-02T03:04:0{status_id[-1]}.000Z", "content": content, "spoiler_text": "",
-                "url": f"https://social.example/@alice/{status_id}", "replies_count": 0,
-                "in_reply_to_id": reply_to, "in_reply_to_account_id": reply_to and "7",
-                "account": {"id": author, "acct": "alice", "username": "alice", "display_name": "Alice"}, "media_attachments": [], **extra}
-
-    def test_post_links_are_told_by_their_shape(self):
-        media_id, url, platform = source_url("https://Social.Example/@alice/1123?utm_source=x")
-        self.assertEqual((url, platform), ("https://social.example/@alice/1123", "Mastodon"))
-        self.assertRegex(media_id, r"^masto-[0-9a-f]{16}$")
-        # The same post under its permanent address; the same number on another server is another post.
-        self.assertEqual(source_url("https://social.example/users/alice/statuses/1123")[0], media_id)
-        self.assertNotEqual(source_url("https://autre.example/@alice/1123")[0], media_id)
-        self.assertEqual(source_url("https://social.example/@bob@autre.example/1123")[1], "https://social.example/@bob@autre.example/1123")
-        self.assertEqual(mastodon.address({"source_url": "https://social.example/@bob@autre.example/1123"}), ("social.example", "1123"))
-        for url in ("https://social.example/@alice", "https://social.example/@alice/with_replies", "https://social.example/@alice/1123/extra",
-                    "https://social.example/tags/1123", "https://www.threads.com/@alice/post/C1"):
-            with self.subTest(url=url):
-                try:
-                    self.assertEqual(source_url(url)[2], "Web")
-                except ValueError:
-                    pass  # Threads, which is refused
-        # Platforms with their own integration keep their links.
-        self.assertEqual(source_url("https://www.tiktok.com/@alice/video/7234567890123456789")[2], "TikTok")
-
-    def test_text_from_html(self):
-        content = ('<p><span class="h-card"><a href="https://autre.example/@bob" class="u-url mention">@<span>bob</span></a></span> Voir '
-                   '<a href="https://exemple.fr/un-tres-long-lien"><span class="invisible">https://</span><span class="ellipsis">exemple.fr/un-tr</span>'
-                   '<span class="invisible">es-long-lien</span></a><br>suite <a href="https://social.example/tags/chat" class="mention hashtag">#<span>chat</span></a></p>'
-                   '<p>Fin &amp; fin</p>')
-        self.assertEqual(mastodon.plain(content), "@bob Voir https://exemple.fr/un-tres-long-lien\nsuite #chat\n\nFin & fin")
-        self.assertEqual(mastodon.plain(""), "")
-        self.assertEqual(mastodon.plain("Texte nu"), "Texte nu")
-        quote = '<p class="quote-inline">RE: <a href="https://autre.example/@bob/5">lien</a></p><p>Mon avis</p>'
-        self.assertEqual(mastodon.plain(quote, quoting=True), "Mon avis")
-        self.assertIn("RE:", mastodon.plain(quote))
-
-    def test_post_details(self):
-        media = [
-            {"type": "image", "url": "https://files.example/a.jpg", "remote_url": None, "description": "Un chat",
-             "meta": {"original": {"width": 800, "height": 600}}},
-            {"type": "gifv", "url": "https://files.example/b.mp4", "remote_url": "https://autre.example/b.mp4",
-             "meta": {"original": {"width": 320, "height": 240, "duration": 2.5}}},
-            {"type": "audio", "url": "https://files.example/c.mp3"}, {"type": "unknown", "url": None},
-        ]
-        quoted = self.status("5", "<p>Cité</p>", author="9", url="https://autre.example/@bob/55",
-                             quote={"state": "accepted", "quoted_status": self.status("6")})
-        quoted["account"] = {"id": "9", "acct": "bob@autre.example", "username": "bob", "display_name": ""}
-        status = self.status("1123", "<p>Texte</p>", spoiler_text="Attention", media_attachments=media,
-                             poll={"options": [{"title": "Oui"}, {"title": "Non"}]}, quote={"state": "accepted", "quoted_status": quoted})
-        post = mastodon.post_details(status, "social.example")
-        self.assertEqual((post["id"], post["url"], post["author"], post["handle"], post["published_at"]),
-                         ("1123", "https://social.example/@alice/1123", "Alice", "alice@social.example", "2026-01-02T03:04:03+00:00"))
-        self.assertEqual(post["text"], "Attention\n\nTexte\n\n– Oui\n– Non\n\nhttps://files.example/c.mp3")
-        self.assertEqual([(a["type"], a["alt_text"], a["duration"], a["source_urls"]) for a in post["assets"]], [
-            ("image", "Un chat", None, ["https://files.example/a.jpg"]),
-            ("video", "", 2.5, ["https://files.example/b.mp4", "https://autre.example/b.mp4"])])
-        self.assertEqual(post["quote"], {"author": "bob", "handle": "bob@autre.example", "text": "Cité",
-                                         "url": "https://autre.example/@bob/55", "published_at": "2026-01-02T03:04:05+00:00", "assets": []})
-        self.assertIsNone(mastodon.post_details(self.status("1", quote={"state": "deleted", "quoted_status": None}), "social.example")["quote"])
-
-    def test_thread_follows_the_author(self):
-        first, second, third = self.status("1"), self.status("2", reply_to="1"), self.status("3", reply_to="2")
-        late = self.status("4", reply_to="2")
-        stranger = self.status("5", author="9", reply_to="2")
-        context = {"ancestors": [first], "descendants": [late, stranger, third]}
-        self.assertEqual([one["id"] for one in mastodon.thread(second, context)], ["1", "2", "3"])
-        reply = {**self.status("2", reply_to="1"), "in_reply_to_account_id": "9"}
-        self.assertEqual([one["id"] for one in mastodon.thread(reply, {"ancestors": [self.status("1", author="9")], "descendants": []})], ["2"])
-
-    def test_answered_post(self):
-        parent = self.status("5", "<p>Question</p>", author="9", url="https://autre.example/@bob/55")
-        parent["account"] = {"id": "9", "acct": "bob@autre.example", "username": "bob", "display_name": "Bob"}
-        reply = {**self.status("6", reply_to="5"), "in_reply_to_account_id": "9"}
-        with patch("archiver.net.fetch", return_value=json_answer(parent)) as fetch:
-            answered = mastodon.answered(reply, "social.example")
-        self.assertEqual(fetch.call_args[0][0], "https://social.example/api/v1/statuses/5")
-        self.assertEqual((answered["author"], answered["handle"], answered["text"], answered["url"]),
-                         ("Bob", "bob@autre.example", "Question", "https://autre.example/@bob/55"))
-        # Gone or hidden: the post is archived without it. A self-reply or a post that answers nothing asks for nothing.
-        with patch("archiver.net.fetch", side_effect=net.HTTPStatus("absent", 404)):
-            self.assertIsNone(mastodon.answered(reply, "social.example"))
-        with patch("archiver.net.fetch", side_effect=AssertionError("not asked")):
-            self.assertIsNone(mastodon.answered(self.status("6", reply_to="5"), "social.example"))
-            self.assertIsNone(mastodon.answered(self.status("6"), "social.example"))
-
-    def test_server_answers(self):
-        status = self.status("1123")
-        with patch("archiver.net.fetch", return_value=json_answer(status)) as fetch:
-            self.assertEqual(mastodon.fetch_status("social.example", "1123")["id"], "1123")
-        self.assertEqual(fetch.call_args[0][0], "https://social.example/api/v1/statuses/1123")
-        with patch("archiver.net.fetch", return_value=json_answer({**self.status("9"), "reblog": status})):
-            self.assertEqual(mastodon.fetch_status("social.example", "9")["id"], "1123")
-        # Not found on a Mastodon server: deleted. Not found on another site: not a Mastodon post.
-        with patch("archiver.net.fetch", side_effect=[net.HTTPStatus("absent", 404), json_answer({"uri": "social.example"})]), \
-                self.assertRaises(mastodon.Gone):
-            mastodon.fetch_status("social.example", "1123")
-        for failure in ([net.HTTPStatus("absent", 404), net.HTTPStatus("absent", 404)], [ValueError("text/html")], [json_answer({"page": 1})]):
-            with self.subTest(failure=failure), patch("archiver.net.fetch", side_effect=failure), self.assertRaises(mastodon.Final) as raised:
-                mastodon.fetch_status("blog.example", "1123")
-            self.assertNotIsInstance(raised.exception, mastodon.Gone)
-            self.assertIn("blog.example", str(raised.exception))
-        with patch("archiver.net.fetch", side_effect=net.Blocked("refus", 401)), self.assertRaises(RuntimeError) as raised:
-            mastodon.fetch_status("social.example", "1123")
-        self.assertIn("without logging in", str(raised.exception))
-        self.assertNotIsInstance(raised.exception, mastodon.Final)
-
-    def test_availability(self):
-        item = {"platform": "Mastodon", "id": "masto-0123456789abcdef", "source_url": "https://social.example/@alice/1123"}
-        with patch("archiver.integrations.mastodon.page", return_value=availability.GONE) as page:
-            self.assertEqual(availability.check(item, None), availability.GONE)
-        self.assertEqual(page.call_args[0][0], "https://social.example/api/v1/statuses/1123")
-
-
-class RedditTests(unittest.TestCase):
-    PERMALINK = "https://www.reddit.com/r/pics/comments/abc12/un_titre/"
-
-    def entry(self, kind="t3", code="abc12", body="<p>Texte</p>", target=None, author="/u/alice", title="Un titre &amp; plus", link=None):
-        content = (f'<!-- SC_OFF --><div class="md">{body}</div><!-- SC_ON -->' if body else '<table><tr><td><img src="https://preview.redd.it/x.jpg?width=140"/></td></tr></table>')
-        content += f' submitted by <a href="https://www.reddit.com/user/alice"> /u/alice </a> <span><a href="{target or self.PERMALINK}">[link]</a></span> <span><a href="{self.PERMALINK}">[comments]</a></span>'
-        escaped = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return (f'<entry><author><name>{author}</name></author><category term="pics" label="r/pics"/><content type="html">{escaped}</content>'
-                f'<id>{kind}_{code}</id><link href="{link or self.PERMALINK}"/><updated>2026-01-02T03:04:05+00:00</updated>'
-                f'<published>2026-01-02T03:04:05+00:00</published><title>{title}</title></entry>')
-
-    def feed(self, *entries):
-        return ('<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom">' + "".join(entries) + "</feed>").encode()
-
-    def details(self, **entry):
-        return reddit.post_details(reddit.read_entries(self.feed(self.entry(**entry)))[0], photos=lambda: [{"gallery": True}])
-
-    def test_post_and_comment_links(self):
-        for url in (self.PERMALINK + "?utm_source=share", "https://old.reddit.com/comments/abc12", "redd.it/abc12", "https://www.reddit.com/gallery/abc12",
-                    "https://www.reddit.com/user/alice/comments/abc12/un_titre/"):
-            with self.subTest(url=url):
-                self.assertEqual(source_url(url), ("rdt-abc12", "https://www.reddit.com/comments/abc12/", "Reddit"))
-        self.assertEqual(source_url(self.PERMALINK + "def34/?context=3"),
-                         ("rdt-abc12-def34", "https://www.reddit.com/comments/abc12/_/def34/", "Reddit"))
-        self.assertEqual(source_url("https://www.reddit.com/r/pics/s/AbCdEf1234"),
-                         ("rdts-AbCdEf1234", "https://www.reddit.com/r/pics/s/AbCdEf1234", "Reddit"))
-        for url in ("https://www.reddit.com/", "https://www.reddit.com/r/pics/", "https://www.reddit.com/user/alice", "https://redd.it/"):
-            with self.subTest(url=url), self.assertRaises(ValueError):
-                source_url(url)
-        self.assertEqual(reddit.address({"source_url": "https://www.reddit.com/comments/abc12/_/def34/"}), ("abc12", "def34"))
-        self.assertEqual(reddit.address({"source_url": self.PERMALINK}), ("abc12", None))
-
-    def test_share_link_is_followed(self):
-        item = {"source_url": "https://www.reddit.com/r/pics/s/AbCdEf1234"}
-        response = unittest.mock.Mock()
-        with patch("archiver.net.open_url", return_value=(self.PERMALINK + "?share_id=x", response)):
-            self.assertEqual(reddit.address(item), ("abc12", None))
-        with patch("archiver.net.open_url", return_value=("https://www.reddit.com/r/pics/", response)), self.assertRaises(RuntimeError):
-            reddit.address(item)
-
-    def test_text_post(self):
-        body = ('<p>Bonjour <a href="https://exemple.fr/page">https://exemple.fr/page</a> et <a href="https://ailleurs.example/">ici</a></p>'
-                '<ul><li>un</li><li>deux</li></ul><blockquote><p>cité</p></blockquote>')
-        post = self.details(body=body)
-        self.assertEqual((post["id"], post["url"], post["title"], post["author"], post["published_at"], post["assets"], post["quote"]),
-                         ("abc12", self.PERMALINK, "Un titre & plus", "u/alice · r/pics", "2026-01-02T03:04:05+00:00", [], None))
-        self.assertEqual(post["text"], "Bonjour https://exemple.fr/page et ici (https://ailleurs.example/)\n\n– un\n– deux\n\ncité")
-
-    def test_media_and_link_posts(self):
-        self.assertEqual(self.details(body="", target="https://i.redd.it/photo1.jpeg")["assets"],
-                         [{"alt_text": "", "duration": None, "width": None, "height": None, "type": "image", "source_urls": ["https://i.redd.it/photo1.jpeg"]}])
-        video = self.details(body="", target="https://v.redd.it/video1abc")["assets"][0]
-        self.assertEqual((video["type"], video["entry"]["url"]), ("video", "https://v.redd.it/video1abc/DASHPlaylist.mpd"))
-        self.assertEqual(self.details(body="", target="https://www.reddit.com/gallery/abc12")["assets"], [{"gallery": True}])
-        shared = self.details(body="", target="https://exemple.fr/article")
-        self.assertEqual((shared["text"], shared["assets"]), ("https://exemple.fr/article", []))
-        crossposted = self.details(body="<p>Vu ailleurs</p>", target="https://www.reddit.com/r/autre/comments/zzz99/origine/")
-        self.assertEqual(crossposted["text"], "Vu ailleurs\n\nhttps://www.reddit.com/r/autre/comments/zzz99/origine/")
-        with self.assertRaises(reddit.Gone):
-            self.details(body="<p>[removed]</p>", author="/u/[deleted]")
-
-    def test_gallery_photos(self):
-        page = ('<gallery-carousel><img src="https://preview.redd.it/un-titre-v0-aaa111.jpeg?width=320&amp;crop=smart&amp;s=1">'
-                '<img srcset="https://preview.redd.it/un-titre-v0-aaa111.jpeg?width=1080&amp;crop=smart&amp;s=2 1080w, '
-                'https://preview.redd.it/un-titre-v0-bbb222.png?width=640&amp;s=3 640w"></gallery-carousel>'
-                '<img src="https://external-preview.redd.it/other.png?width=320">')
-        with patch("archiver.net.fetch", return_value=net.Response("", "text/html", page.encode(), {})) as fetch:
-            photos = reddit.gallery(reddit.embed(self.PERMALINK))
-        self.assertEqual(fetch.call_args[0][0], "https://embed.reddit.com/r/pics/comments/abc12/un_titre/?embed=true")
-        self.assertEqual([photo["source_urls"] for photo in photos], [
-            ["https://i.redd.it/aaa111.jpeg", "https://preview.redd.it/un-titre-v0-aaa111.jpeg?width=1080&crop=smart&s=2"],
-            ["https://i.redd.it/bbb222.png", "https://preview.redd.it/un-titre-v0-bbb222.png?width=640&s=3"]])
-        with self.assertRaises(RuntimeError):
-            reddit.gallery("<html></html>")
-
-    def test_feed_answers(self):
-        stopping = threading.Event()
-        feed = net.Response("", "application/atom+xml", self.feed(self.entry()), {})
-        with patch("archiver.net.fetch", return_value=feed) as fetch:
-            reddit.fetch_feed("abc12", "def34", stopping)
-        self.assertEqual(fetch.call_args[0][0], "https://www.reddit.com/comments/abc12/_/def34/.rss?limit=1")
-        with patch("archiver.net.fetch", side_effect=net.HTTPStatus("absent", 404)), self.assertRaises(reddit.Gone):
-            reddit.fetch_feed("abc12", None, stopping)
-        with patch("archiver.net.fetch", side_effect=net.Blocked("privé", 403)), self.assertRaises(RuntimeError) as raised:
-            reddit.fetch_feed("abc12", None, stopping)
-        self.assertIn("without logging in", str(raised.exception))
-        # One visit a minute: the next one is waited for, then the archive gives up until its automatic retry.
-        with patch.object(reddit, "WAIT_SECONDS", 0), patch("archiver.net.fetch", side_effect=[net.Blocked("limite", 429), feed]) as fetch:
-            self.assertEqual(reddit.fetch_feed("abc12", None, stopping), feed.body)
-        with patch.object(reddit, "WAIT_SECONDS", 0), patch("archiver.net.fetch", side_effect=net.Blocked("limite", 429)) as fetch, \
-                self.assertRaises(RuntimeError) as raised:
-            reddit.fetch_feed("abc12", None, stopping)
-        self.assertEqual(fetch.call_count, 3)
-        self.assertIn("temporarily limiting", str(raised.exception))
-        with self.assertRaises(RuntimeError):
-            reddit.read_entries(b"<html>captcha")
-
-    def test_comment_is_archived_under_its_post(self):
-        comment = self.entry(kind="t1", code="def34", body="<p>Un avis</p>", author="/u/bob", link=self.PERMALINK + "def34/")
-        feed = self.feed(self.entry(body="<p>Le post</p>", target="https://i.redd.it/photo1.jpeg"), comment)
-        worker = unittest.mock.Mock(stopping=threading.Event())
-        item = {"id": "rdt-abc12-def34", "source_url": "https://www.reddit.com/comments/abc12/_/def34/"}
-        with patch("archiver.net.fetch", return_value=net.Response("", "application/atom+xml", feed, {})) as fetch:
-            reddit.archive(item, worker)
-        (_, posts, raw, _), _ = worker.archive_posts.call_args
-        self.assertEqual((posts[0]["id"], posts[0]["author"], posts[0]["text"], posts[0]["url"], posts[0]["assets"]),
-                         ("def34", "u/bob", "Un avis", self.PERMALINK + "def34/", []))
-        under = posts[0]["reply_to"]
-        self.assertEqual((under["author"], under["text"], under["url"]), ("u/alice · r/pics", "Un titre & plus\n\nLe post", self.PERMALINK))
-        self.assertEqual(under["assets"][0]["source_urls"], ["https://i.redd.it/photo1.jpeg"])
-        self.assertEqual(raw["source"], "reddit")
-        # Only the feed was read: the embed page is for galleries.
-        self.assertEqual(fetch.call_count, 1)
-        # A comment that is gone from its post's feed.
-        with patch("archiver.net.fetch", return_value=net.Response("", "application/atom+xml", self.feed(self.entry()), {})), \
-                self.assertRaises(reddit.Gone):
-            reddit.archive(item, worker)
-
-
 class LocaleTests(unittest.TestCase):
     ROOT = Path(__file__).resolve().parent.parent
 
@@ -986,6 +192,8 @@ class LocaleTests(unittest.TestCase):
         for name in ("render.js", "app.js", "viewer.js", "login.js", "index.html", "viewer.html", "login.html"):
             used.update(re.findall(r"""(?:\bt\(|data-i18n(?:-[a-z]+)?=)["']([a-zA-Z0-9.]+)["']""", (self.ROOT / "web" / name).read_text(encoding="utf-8")))
         self.assertEqual(used - set(languages["en"]), set())
+        # So does the text of everything an archive may lack.
+        self.assertLessEqual({f"warning.{kind}" for kind in WARNINGS}, set(languages["en"]))
         # What browsers get: the languages in the script's table, English first, and nothing that would close an inline script.
         script = i18n.interface_script()
         self.assertIn('const TRANSLATIONS = {"en":{"language.name":"English"', script)
@@ -1045,10 +253,11 @@ class SubtitleTests(unittest.TestCase):
             return ""
 
         with patch.dict(os.environ, {"STORAGE_BACKEND": "local"}), \
-                patch("archiver.downloader.dependencies", return_value={"yt-dlp": True}), patch.object(worker, "run", side_effect=run):
+                patch("archiver.downloader.dependencies", return_value={}), patch.object(worker, "run", side_effect=run):
             worker.handle(item["id"])
         return store, worker, store.get(item["id"]), commands
 
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
     def test_subtitles_are_kept_with_the_video(self):
         def subtitles(directory):
             (directory / "original.fr.vtt").write_text(self.VTT, encoding="utf-8")
@@ -1074,13 +283,15 @@ class SubtitleTests(unittest.TestCase):
             self.assertEqual(viewer.records([item], worker.storage)[0]["subtitle_text"], "Bonjour à tous un mot rare")
             self.assertIsNone(viewer.subtitle_text({**item, "details": {}}, worker.storage))
 
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
     def test_video_is_archived_when_subtitles_fail(self):
         def refused(directory):
             raise RuntimeError("ERROR: Unable to download video subtitles for 'fr': HTTP Error 429: Too Many Requests")
 
         with tempfile.TemporaryDirectory() as temp:
             store, worker, item, commands = self.archive(temp, refused)
-            self.assertEqual((item["status"], item["error"], item["details"]), ("ready", None, {}))
+            # The video is kept, and shown as incomplete.
+            self.assertEqual((item["status"], item["error"], item["details"]), ("ready", None, {"warnings": ["subtitles"]}))
             self.assertEqual(len(commands), 2)
             self.assertNotIn("subtitle_text", viewer.records([item], worker.storage)[0])
 
@@ -1312,7 +523,7 @@ class ProxyTests(unittest.TestCase):
                 commands.append(command)
                 raise RuntimeError("ERROR: proxy http://user:secret@proxy.test:8000 failed")
             with patch.dict(os.environ, {"PROXY": "proxy.test:8000:user:secret"}), \
-                    patch("archiver.downloader.dependencies", return_value={"yt-dlp": True}), \
+                    patch("archiver.downloader.dependencies", return_value={}), \
                     patch.object(worker, "run", side_effect=run):
                 worker.handle(VIDEO_ID)
             command = commands[0]
@@ -1575,11 +786,11 @@ class PostArchiveTests(unittest.TestCase):
             quote = {"author": "Autre", "handle": "autre", "text": "Post cité", "url": "https://x.com/autre/status/5",
                      "assets": [photo("cité")]}
             posts = [
-                {"id": POST_ID, "url": POST_URL, "author": "Perry", "handle": "perrypumas", "published_at": None,
+                {"id": POST_ID, "url": POST_URL, "author": "Example", "handle": "example", "published_at": None,
                  "text": "Sans média", "quote": quote, "assets": [], "title": "Un titre à part",
                  "reply_to": {"author": "Tiers", "handle": None, "text": "Question", "url": "https://x.com/tiers/status/1",
                               "published_at": None, "assets": [photo("répondu")]}},
-                {"id": "2", "url": "https://x.com/perrypumas/status/2", "author": "Perry", "handle": "perrypumas",
+                {"id": "2", "url": "https://x.com/example/status/2", "author": "Example", "handle": "example",
                  "published_at": None, "text": "Suite", "quote": None, "assets": [photo("propre")]},
             ]
             fetched = []
@@ -1610,6 +821,36 @@ class PostArchiveTests(unittest.TestCase):
             record = json.loads((worker.storage.directory(item["id"]) / "archive.json").read_text())
             self.assertEqual(record["posts"][0]["quote"]["media"], [1])
 
+    def test_a_reply_on_x_is_archived(self):
+        # Without its page, X only tells which post is answered, by its id: nothing of that post is kept.
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STORAGE_BACKEND": "local"}):
+            store = Store(Path(temp) / "data")
+            worker = Downloader(store, Storage(store.root))
+            item, _ = store.add(POST_URL, [])
+            reply = syndication_post(x_post(mediaDetails=[], in_reply_to_status_id_str="1", in_reply_to_user_id_str="2"), POST_ID)
+            worker.archive_posts(item, [reply], {}, None)
+            archived = store.get(item["id"])
+            self.assertEqual(archived["status"], "ready")
+            self.assertNotIn("reply_to", archived["posts"][0])
+            self.assertNotIn("warnings", archived["details"])
+
+    def test_what_an_archive_lacks_is_kept_with_it(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STORAGE_BACKEND": "local"}):
+            store = Store(Path(temp) / "data")
+            worker = Downloader(store, Storage(store.root))
+            item, _ = store.add(POST_URL, [])
+            post = syndication_post(x_post(mediaDetails=[]), POST_ID)
+            for kind in ("thread", "reply_to", "thread"):
+                worker.warn(item, kind)
+            with self.assertRaises(ValueError):
+                worker.warn(item, "something else")
+            worker.archive_posts(item, [post], {}, None)
+            self.assertEqual(store.get(item["id"])["details"]["warnings"], ["thread", "reply_to"])
+            self.assertEqual(json.loads(manifest.render(store.get(item["id"])))["details"]["warnings"], ["thread", "reply_to"])
+            # Archived again without anything missing, it is complete.
+            worker.archive_posts(item, [post], {}, None)
+            self.assertNotIn("warnings", store.get(item["id"])["details"])
+
 
 class MemoryTests(unittest.TestCase):
     """archive.json, fixity checks and checks that originals are still online."""
@@ -1625,19 +866,21 @@ class MemoryTests(unittest.TestCase):
         self.storage = Storage(self.store.root)
         self.maintenance = Maintenance(self.store, self.storage)
 
-    def legacy_item(self):
-        """A ready archive from before file hashes existed."""
-        item, _ = self.store.add("https://example.org/article", ["lecture"])
+    def ready_article(self, url="https://example.org/article", verified=True):
+        """A ready web page with its files recorded; not `verified`, its files are due for a first check."""
+        item, _ = self.store.add(url, ["lecture"])
         directory = self.storage.directory(item["id"])
         directory.mkdir(parents=True)
         (directory / "article.html").write_text("<p>Bonjour</p>")
         (directory / "description.txt").write_text("Bonjour")
-        self.store.update(item["id"], status="ready", title="Un article")
+        files = {name: manifest.hash_file(directory / name) for name in ("article.html", "description.txt")}
+        self.store.update(item["id"], status="ready", title="Un article", files=files,
+                          **({"integrity": "ok", "integrity_checked_at": now()} if verified else {}))
+        manifest.publish(self.store, self.storage, item["id"])
         return self.store.get(item["id"])
 
     def test_viewer_is_written_at_the_root_of_the_storage(self):
-        item = self.legacy_item()
-        self.maintenance.describe(item)
+        item = self.ready_article()
         self.store.update(item["id"], tags=["lecture", "web"])
         self.maintenance.step()
         page = (self.store.root / "media" / "index.html").read_text()
@@ -1646,9 +889,54 @@ class MemoryTests(unittest.TestCase):
         self.assertIn("<p>Bonjour<\\/p>", page)  # the article travels with the page, escaped inside its script
         self.assertFalse(self.store.changed.is_set())
 
-    def test_fixity_check_completes_older_records_with_a_crc(self):
-        item = self.legacy_item()
-        self.maintenance.describe(item)
+    def test_viewer_keeps_changes_made_during_publication_pending(self):
+        item = self.ready_article()
+        self.store.update(item["id"], note="Before publication")
+        put = self.storage.put_root
+
+        def edited_meanwhile(name, data):
+            self.store.update(item["id"], note="Changed during publication")
+            put(name, data)
+
+        with patch.object(self.storage, "put_root", side_effect=edited_meanwhile):
+            self.maintenance.write_viewer()
+        page = self.store.root / "media" / "index.html"
+        self.assertIn("Before publication", page.read_text())
+        self.assertTrue(self.store.changed.is_set())
+        self.maintenance.write_viewer()
+        self.assertIn("Changed during publication", page.read_text())
+        self.assertFalse(self.store.changed.is_set())
+
+    def test_viewer_failure_keeps_publication_pending(self):
+        self.ready_article()
+        with patch.object(self.storage, "put_root", side_effect=OSError("storage unavailable")):
+            with self.assertRaises(OSError):
+                self.maintenance.write_viewer()
+        self.assertTrue(self.store.changed.is_set())
+        self.maintenance.write_viewer()
+        self.assertTrue((self.store.root / "media" / "index.html").exists())
+        self.assertFalse(self.store.changed.is_set())
+
+    def test_concurrent_record_writes_use_independent_temporary_files(self):
+        item = self.ready_article()
+        replace = Path.replace
+        nested = False
+
+        def publish_during_replace(source, target):
+            nonlocal nested
+            if not nested:
+                nested = True
+                self.storage.put(item, manifest.NAME, b'second record')
+            return replace(source, target)
+
+        with patch.object(Path, 'replace', publish_during_replace):
+            self.storage.put(item, manifest.NAME, b'first record')
+        with self.storage.read(item, manifest.NAME) as stream:
+            self.assertEqual(stream.read(), b'first record')
+        self.assertFalse(list(self.storage.directory(item['id']).glob('*.tmp')))
+
+    def test_fixity_check_completes_records_without_a_crc(self):
+        item = self.ready_article()
         files = {name: {"sha256": value["sha256"], "size": value["size"]} for name, value in self.store.get(item["id"])["files"].items()}
         self.store.update(item["id"], files=files)
         self.maintenance.verify(self.store.get(item["id"]))
@@ -1659,25 +947,27 @@ class MemoryTests(unittest.TestCase):
         self.assertTrue(all("crc32" not in value for value in record["files"].values()))
 
     def test_one_unreadable_archive_never_blocks_the_others(self):
-        empty, _ = self.store.add("https://example.org/vide", [])
-        self.store.update(empty["id"], status="ready")  # its folder was lost
-        broken = self.legacy_item()
-        other, _ = self.store.add("https://example.org/autre", [])
-        directory = self.storage.directory(other["id"])
-        directory.mkdir(parents=True)
-        (directory / "article.html").write_text("<p>Autre</p>")
-        self.store.update(other["id"], status="ready")
-        real_list = self.storage.list
-        with patch.object(self.storage, "list", side_effect=lambda item: (_ for _ in ()).throw(OSError("disque")) if item["id"] == broken["id"] else real_list(item)):
+        lost = self.ready_article("https://example.org/perdu", verified=False)
+        shutil.rmtree(self.storage.directory(lost["id"]))
+        broken = self.ready_article(verified=False)
+        other = self.ready_article("https://example.org/autre", verified=False)
+        real_read = self.storage.read
+
+        def read(item, name):
+            if item["id"] == broken["id"]:
+                raise OSError("disque")
+            return real_read(item, name)
+
+        with patch.object(self.storage, "read", side_effect=read):
             for _ in range(3):
-                self.maintenance.step()
-        self.assertEqual(self.store.get(empty["id"])["integrity"], "damaged")
-        self.assertIsNone(self.store.get(broken["id"])["integrity"])  # unreadable: retried tomorrow
-        self.assertEqual(sorted(self.store.get(other["id"])["files"]), ["article.html"])
+                self.assertEqual(self.maintenance.step(), 1)
+        self.assertEqual(self.store.get(lost["id"])["integrity"], "damaged")
+        self.assertIsNone(self.store.get(broken["id"])["integrity"])  # unreadable: checked again later
+        self.assertEqual(self.store.get(other["id"])["integrity"], "ok")
         self.assertEqual(self.maintenance.step(), 600)  # nothing left today
 
     def test_trash_is_emptied_after_thirty_days(self):
-        old, recent = self.legacy_item(), None
+        old = self.ready_article()
         recent, _ = self.store.add("https://example.org/recent", [])
         self.store.update(recent["id"], status="ready")
         self.store.trash([old["id"], recent["id"]])
@@ -1689,9 +979,9 @@ class MemoryTests(unittest.TestCase):
         self.assertIsNotNone(self.store.get(recent["id"]))
 
     def test_catalog_is_rebuilt_from_archive_records(self):
-        item = self.legacy_item()
+        item = self.ready_article()
         self.store.update(item["id"], note="Une note", tags=["lecture", "web"])
-        self.maintenance.describe(self.store.get(item["id"]))
+        manifest.publish(self.store, self.storage, item["id"])
         before = self.store.get(item["id"])
         broken = self.storage.directory("web-0123456789abcdef")
         broken.mkdir(parents=True)
@@ -1705,31 +995,22 @@ class MemoryTests(unittest.TestCase):
         self.assertIsNone(restored["integrity_checked_at"])  # verified again soon
         self.assertEqual(manifest.restore(self.store, self.storage), (0, 1, 1))  # never overwritten
 
-    def test_older_archives_get_hashes_and_archive_json(self):
-        item = self.legacy_item()
-        self.assertEqual(self.maintenance.step(), 1)
-        updated = self.store.get(item["id"])
-        self.assertEqual(sorted(updated["files"]), ["article.html", "description.txt"])
-        self.assertEqual(updated["integrity"], "ok")
-        record = json.loads((self.storage.directory(item["id"]) / "archive.json").read_text())
-        self.assertEqual((record["title"], record["tags"], record["files"]), ("Un article", ["lecture"], manifest.file_records(updated["files"])))
-        self.assertEqual(self.maintenance.step(), 600)  # nothing left to do
-
     def test_fixity_check_detects_altered_and_missing_files(self):
-        item = self.legacy_item()
-        self.maintenance.describe(item)
+        item = self.ready_article()
         self.maintenance.verify(self.store.get(item["id"]))
         self.assertEqual(self.store.get(item["id"])["integrity"], "ok")
         (self.storage.directory(item["id"]) / "article.html").write_text("<p>Modifié</p>")
         self.maintenance.verify(self.store.get(item["id"]))
         self.assertEqual(self.store.get(item["id"])["integrity"], "damaged")
-        self.maintenance.describe(self.store.get(item["id"]))
+        (self.storage.directory(item["id"]) / "article.html").write_text("<p>Bonjour</p>")
+        self.maintenance.verify(self.store.get(item["id"]))
+        self.assertEqual(self.store.get(item["id"])["integrity"], "ok")
         (self.storage.directory(item["id"]) / "description.txt").unlink()
         self.maintenance.verify(self.store.get(item["id"]))
         self.assertEqual(self.store.get(item["id"])["integrity"], "damaged")
 
     def test_vanished_original_is_dated_and_cleared_when_back(self):
-        item = self.legacy_item()
+        item = self.ready_article()
         with patch("archiver.availability.check", return_value=availability.GONE):
             self.maintenance.check(item)
         gone = self.store.get(item["id"])
@@ -1742,31 +1023,24 @@ class MemoryTests(unittest.TestCase):
             self.maintenance.check(gone)
         self.assertEqual((self.store.get(item["id"])["availability"], self.store.get(item["id"])["gone_since"]), ("online", None))
 
-    def test_unchecked_platforms_are_never_due(self):
-        item, _ = self.store.add("https://www.instagram.com/p/ABCDEF/", [])
-        self.store.update(item["id"], status="ready", files={"a": {}}, integrity="ok", integrity_checked_at="9000")
+    def test_one_original_is_checked_an_hour_on_each_platform(self):
+        ids = []
+        for url in ("https://www.instagram.com/p/ABCDEF/", "https://www.instagram.com/p/GHIJKL/", "https://www.reddit.com/comments/abc12/",
+                    "https://example.org/un", "https://example.org/deux"):
+            item, _ = self.store.add(url, [])
+            self.store.update(item["id"], status="ready", files={"a": {}}, integrity="ok", integrity_checked_at="9000")
+            ids.append(item["id"])
         self.maintenance.check_days = 7
-        with patch("archiver.availability.check", side_effect=AssertionError("Instagram must not be checked")):
-            self.assertEqual(self.maintenance.step(), 600)
-        web = self.legacy_item()
-        self.store.update(web["id"], files={"a": {}}, integrity="ok", integrity_checked_at="9000")
         with patch("archiver.availability.check", return_value=availability.ONLINE) as check:
-            self.assertEqual(self.maintenance.step(), 30)
-        self.assertEqual(check.call_args[0][0]["id"], web["id"])
-
-    def test_x_and_tiktok_answers(self):
-        from archiver import net
-        with patch("archiver.integrations.x.XClient.fetch_post", side_effect=net.HTTPStatus("absent", 404)):
-            self.assertEqual(x.online({"id": "x-1"}, None), availability.GONE)
-        with patch("archiver.integrations.x.XClient.fetch_post", side_effect=net.Blocked("limite", 429)):
-            self.assertEqual(x.online({"id": "x-1"}, None), availability.UNKNOWN)
-        with patch("archiver.integrations.x.XClient.fetch_post", return_value={"__typename": "TweetTombstone"}):
-            self.assertEqual(x.online({"id": "x-1"}, None), availability.GONE)
-        with patch("archiver.integrations.x.XClient.fetch_post", return_value={"__typename": "Tweet", "id_str": "1"}):
-            self.assertEqual(x.online({"id": "x-1"}, None), availability.ONLINE)
-        deleted = '<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">{"__DEFAULT_SCOPE__": {"webapp.video-detail": {"statusCode": 10204}}}</script>'
-        with patch("archiver.net.fetch", return_value=net.Response("", "text/html", deleted.encode(), {})):
-            self.assertEqual(tiktok.online({"id": "tt-70"}, None), availability.GONE)
+            for _ in range(4):
+                self.assertEqual(self.maintenance.step(), 30)
+            # The second Instagram post waits for the next hour; web pages, as many sites, do not wait.
+            self.assertEqual(self.maintenance.step(), 600)
+            self.assertEqual(sorted(call[0][0]["id"] for call in check.call_args_list), sorted([ids[0], *ids[2:]]))
+            self.assertIsNone(self.store.get(ids[1])["availability"])
+            with patch("archiver.maintenance.CHECK_SECONDS", 0):
+                self.assertEqual(self.maintenance.step(), 30)
+        self.assertEqual(self.store.get(ids[1])["availability"], "online")
 
 
 class AvailabilityPageTests(unittest.TestCase):
@@ -1816,12 +1090,6 @@ class StoreTests(unittest.TestCase):
         self.store.recover()
         self.assertEqual(self.store.get(VIDEO_ID)["status"], "ready")
 
-    def test_legacy_x_archive_is_a_single_post(self):
-        item, _ = self.store.add(POST_URL, [])
-        self.store.update(item["id"], status="ready", description="Texte", attachments=[{"type": "image"}, {"type": "image"}])
-        self.assertEqual(self.store.get(item["id"])["posts"][0]["media"], [0, 1])
-        self.assertEqual(self.store.get(item["id"])["posts"][0]["text"], "Texte")
-
     def test_progress_is_written_at_most_once_a_second(self):
         self.store.add(VIDEO_URL, [])
         self.store.update(VIDEO_ID, progress=10)
@@ -1853,11 +1121,36 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(done, [f"x-{POST_ID}"])
         worker.stop()
 
+    def test_one_archive_at_a_time_per_platform(self):
+        ids = [self.store.add(url, [])[0]["id"] for url in (VIDEO_URL, POST_URL, "https://x.com/example/status/2")]
+        worker = Downloader(self.store, Storage(self.store.root))
+        started, release = [], threading.Event()
+        both = threading.Barrier(3)
+
+        def download(media_id):
+            started.append(media_id)
+            if len(started) <= 2:
+                both.wait(timeout=5)  # the video and the first post are being archived together
+            release.wait(timeout=5)
+
+        with patch.object(worker, "download", side_effect=download):
+            worker.thread.start()
+            for media_id in ids:
+                worker.enqueue(media_id)
+            both.wait(timeout=5)
+            # The second post waits for the first one, of the same platform.
+            self.assertEqual(sorted(started), sorted(ids[:2]))
+            release.set()
+            worker.queue.join()
+        self.assertEqual(started[2], ids[2])
+        self.assertEqual(sorted(thread.name for _, thread in worker.lanes.values()), ["archive-X", "archive-YouTube"])
+        worker.stop()
+
     def test_age_restricted_video_gets_a_clear_error(self):
         self.store.add(VIDEO_URL, [])
         worker = Downloader(self.store, Storage(self.store.root))
         failure = RuntimeError(f"ERROR: [youtube] {VIDEO_ID}: Sign in to confirm your age. Use --cookies-from-browser or --cookies")
-        with patch("archiver.downloader.dependencies", return_value={"yt-dlp": True}), \
+        with patch("archiver.downloader.dependencies", return_value={}), \
                 patch.object(worker, "run", side_effect=failure):
             worker.handle(VIDEO_ID)
         error = self.store.get(VIDEO_ID)["error"]
@@ -1871,7 +1164,7 @@ class StoreTests(unittest.TestCase):
         worker = Downloader(self.store, Storage(self.store.root))
         failure = RuntimeError(f"ERROR: [youtube] {VIDEO_ID}: Sign in to confirm you’re not a bot. "
                                "Use --cookies-from-browser or --cookies for the authentication.")
-        with patch("archiver.downloader.dependencies", return_value={"yt-dlp": True}), \
+        with patch("archiver.downloader.dependencies", return_value={}), \
                 patch.object(worker, "run", side_effect=failure):
             worker.handle(VIDEO_ID)
         error = self.store.get(VIDEO_ID)["error"]
@@ -1926,10 +1219,33 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.get(VIDEO_ID)["retries"], 0)
         self.assertIsNotNone(self.store.get(VIDEO_ID)["retry_at"])
 
+    def test_a_final_failure_is_neither_retried_nor_left_to_a_relay(self):
+        self.store.add(VIDEO_URL, [])
+        worker = Downloader(self.store, Storage(self.store.root))
+        gone = integrations.Gone(integrations.DELETED.format(platform="YouTube"))
+        # Alone, or reported by `attempt` with the route it tried when a proxy is configured.
+        for env in ({}, {"PROXY": "proxy.test:8000", "PROXY_MODE": "fallback"}):
+            with self.subTest(env=env), patch.dict(os.environ, env), patch.object(worker, "download", side_effect=gone):
+                worker.handle(VIDEO_ID)
+                item = self.store.get(VIDEO_ID)
+                self.assertEqual((item["status"], item["retry_at"], item["final"]), ("error", None, 1))
+                self.assertIn("no longer exists", item["error"])
+                self.assertEqual((self.store.due_retries(), self.store.relayable()), ([], []))
+                # Retried by the user, it is a failure like any other until it fails the same way again.
+                self.assertTrue(self.store.retry(VIDEO_ID))
+                self.assertEqual(self.store.get(VIDEO_ID)["final"], 0)
+        # A tool missing on this computer says nothing of the original: a relay may have it.
+        with patch("archiver.downloader.dependencies", return_value={"ffmpeg": False}):
+            worker.handle(VIDEO_ID)
+        item = self.store.get(VIDEO_ID)
+        self.assertEqual((item["final"], item["error"]), (0, "Missing tools: ffmpeg. See the README or use Docker."))
+        self.assertIsNotNone(item["retry_at"])
+        self.assertEqual(self.store.relayable(), [{"id": VIDEO_ID, "url": VIDEO_URL, "languages": None}])
+
     def test_due_retries_are_queued_by_the_worker_but_not_from_the_trash(self):
         self.store.add(VIDEO_URL, [])
         worker = Downloader(self.store, Storage(self.store.root))
-        with patch("archiver.downloader.dependencies", return_value={"yt-dlp": True}), \
+        with patch("archiver.downloader.dependencies", return_value={}), \
                 patch.object(worker, "run", side_effect=RuntimeError("ERROR: network")):
             worker.handle(VIDEO_ID)
         self.store.update(VIDEO_ID, retry_at="2020-01-01T00:00:00+00:00")
@@ -2010,11 +1326,12 @@ class HTTPTests(ServerTestCase):
         directory = self.server.storage.directory(item["id"])
         directory.mkdir(parents=True)
         (directory / "original.mp4").write_bytes(bytes(range(100)))
-        self.server.store.update(item["id"], status="ready", original="original.mp4", playback="original.mp4", size=100)
+        self.server.store.update(item["id"], status="ready", original="original.mp4", playback="original.mp4", size=100,
+                                 files={"original.mp4": manifest.hash_file(directory / "original.mp4")})
         return item
 
     def test_create_duplicate_and_invalid_url(self):
-        with patch("archiver.server.dependencies", return_value={"yt-dlp": True}):
+        with patch("archiver.server.dependencies", return_value={}):
             self.assertEqual(self.request("POST", "/api/media", {"url": VIDEO_URL})[0], 201)
             self.assertEqual(self.request("POST", "/api/media", {"url": VIDEO_URL})[0], 200)
             self.assertEqual(self.request("POST", "/api/media", {"url": "http://localhost/admin"})[0], 400)
@@ -2022,7 +1339,7 @@ class HTTPTests(ServerTestCase):
 
     def test_link_archived_again(self):
         self.ready_item()
-        with patch("archiver.server.dependencies", return_value={"yt-dlp": True}):
+        with patch("archiver.server.dependencies", return_value={}):
             status, _, body = self.request("POST", "/api/media", {"url": VIDEO_URL})
             result = json.loads(body)
             self.assertEqual((status, result["created"], [o["id"] for o in result["occurrences"]]), (200, False, [VIDEO_ID]))
@@ -2037,7 +1354,7 @@ class HTTPTests(ServerTestCase):
             self.assertEqual(json.loads(self.request("POST", "/api/media", {"url": VIDEO_URL, "again": True})[2])["item"]["id"],
                              f"{VIDEO_ID}.3")
         self.assertEqual(self.server.worker.queue.qsize(), 2)
-        self.assertEqual(self.request("GET", f"/api/media/{VIDEO_ID}.2")[0], 200)
+        self.assertEqual(self.request("GET", f"/api/media/{VIDEO_ID}.2/metadata")[0], 200)
         with patch("archiver.integrations.youtube.online", return_value="online") as youtube:
             availability.check(self.server.store.get(f"{VIDEO_ID}.2"), None)
         self.assertEqual(youtube.call_args[0][0]["id"], f"{VIDEO_ID}.2")
@@ -2053,7 +1370,7 @@ class HTTPTests(ServerTestCase):
         self.assertEqual(self.request("GET", f"/api/media/{item['id']}/file/subtitles")[0], 404)
         self.assertEqual(json.loads(self.request("GET", "/api/articles/text")[2]), {"texts": {item["id"]: "Bonjour à tous un mot rare"}})
 
-    def test_tags_metadata_delete(self):
+    def test_tags_metadata_and_purge(self):
         self.ready_item()
         status, _, body = self.request("PATCH", f"/api/media/{VIDEO_ID}", {"tags": ["Nature"]})
         self.assertEqual(status, 200)
@@ -2061,15 +1378,14 @@ class HTTPTests(ServerTestCase):
         status, _, body = self.request("GET", f"/api/media/{VIDEO_ID}/metadata")
         self.assertEqual(json.loads(body)["source_url"], VIDEO_URL)
         self.assertEqual(json.loads(body)["tags"], ["nature"])
-        # Repeated deletion is safe: only an explicit purge can delete the stored files.
-        self.assertEqual(json.loads(self.request("DELETE", f"/api/media/{VIDEO_ID}")[2]), {"deleted": True, "trashed": True})
+        # Only an explicit purge, from the trash, deletes the stored files.
+        self.request("POST", "/api/media/batch", {"action": "delete", "ids": [VIDEO_ID]})
         self.assertTrue(self.server.store.get(VIDEO_ID)["deleted_at"])
         self.assertTrue(self.server.storage.directory(VIDEO_ID).exists())
-        self.assertEqual(json.loads(self.request("DELETE", f"/api/media/{VIDEO_ID}")[2]), {"deleted": True, "trashed": True})
-        self.assertTrue(self.server.storage.directory(VIDEO_ID).exists())
-        self.assertEqual(json.loads(self.request("POST", f"/api/media/{VIDEO_ID}/purge", {})[2]), {"deleted": True, "trashed": False})
+        self.assertEqual(json.loads(self.request("POST", "/api/media/batch", {"action": "purge", "ids": [VIDEO_ID]})[2]),
+                         {"deleted": 1, "skipped": 0})
         self.assertFalse(self.server.storage.directory(VIDEO_ID).exists())
-        self.assertEqual(self.request("GET", f"/api/media/{VIDEO_ID}")[0], 404)
+        self.assertEqual(self.request("GET", f"/api/media/{VIDEO_ID}/metadata")[0], 404)
 
     def test_a_failure_while_sending_never_appends_an_error_to_the_file(self):
         self.ready_item()
@@ -2099,17 +1415,18 @@ class HTTPTests(ServerTestCase):
             catalog = json.loads(archive.read(next(n for n in archive.namelist() if n.endswith("catalog.json"))))
         self.assertEqual([entry["id"] for entry in catalog], [VIDEO_ID])
         # Archiving again a link that is in the trash takes it out, without downloading it again.
-        with patch("archiver.server.dependencies", return_value={"yt-dlp": True}):
+        with patch("archiver.server.dependencies", return_value={}):
             result = json.loads(self.request("POST", "/api/media", {"url": POST_URL})[2])
         self.assertEqual((result["created"], result["restored"], result["item"]["deleted_at"]), (False, True, None))
-        self.request("DELETE", f"/api/media/{post['id']}")
+        self.request("POST", "/api/media/batch", {"action": "delete", "ids": [post["id"]]})
         self.assertEqual(json.loads(self.request("POST", "/api/trash/empty", {})[2]), {"deleted": 1})
         self.assertIsNone(self.server.store.get(post["id"]))
         self.assertIsNotNone(self.server.store.get(VIDEO_ID))
 
     def test_active_job_cannot_be_deleted_or_retried(self):
         self.server.store.add(VIDEO_URL, [])
-        self.assertEqual(self.request("DELETE", f"/api/media/{VIDEO_ID}")[0], 409)
+        self.assertEqual(json.loads(self.request("POST", "/api/media/batch", {"action": "delete", "ids": [VIDEO_ID]})[2]),
+                         {"deleted": 0, "skipped": 1})
         self.assertEqual(self.request("POST", f"/api/media/{VIDEO_ID}/retry", {})[0], 409)
         self.server.store.update(VIDEO_ID, status="error", error="network")
         self.assertEqual(self.request("POST", f"/api/media/{VIDEO_ID}/retry", {})[0], 200)
@@ -2160,7 +1477,8 @@ class HTTPTests(ServerTestCase):
         (directory / "description.txt").write_text("Texte du post")
         attachments = [{"type": "image", "original": f"media-0{n}-original.jpg", "playback": f"media-0{n}-original.jpg",
                         "thumbnail": f"media-0{n}-original.jpg"} for n in (1, 2)]
-        self.server.store.update(item["id"], status="ready", attachments=attachments, original=attachments[0]["original"])
+        self.server.store.update(item["id"], status="ready", attachments=attachments, original=attachments[0]["original"],
+                                 files={path.name: manifest.hash_file(path) for path in directory.iterdir()})
         status, headers, body = self.request("GET", f"/api/media/{item['id']}/file/original/1")
         self.assertEqual((status, body), (200, b"media-02-original.jpg"))
         self.assertIn("attachment", headers["Content-Disposition"])
@@ -2223,6 +1541,14 @@ class HTTPTests(ServerTestCase):
         self.assertEqual(status, 200)
         self.assertIsNone(zipfile.ZipFile(io.BytesIO(body)).testzip())
 
+    def test_export_dates_outside_zip_range_still_produce_valid_archives(self):
+        for date in ('0001-01-01', '9999-12-31'):
+            with self.subTest(date=date):
+                status, _, body = self.request('GET', '/api/export?at=' + date)
+                self.assertEqual(status, 200)
+                with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                    self.assertIsNone(archive.testzip())
+
     def test_export_remembers_crcs_it_had_to_read(self):
         self.ready_item()
         record = manifest.hash_file(self.server.storage.directory(VIDEO_ID) / "original.mp4")
@@ -2235,15 +1561,6 @@ class HTTPTests(ServerTestCase):
         self.assertEqual(self.server.store.get(VIDEO_ID)["files"]["original.mp4"]["crc32"], record["crc32"])
         # Known CRCs change nothing in the file: the next export is byte for byte the same.
         self.assertEqual(self.request("GET", "/api/export?at=2026-10-25")[2], first)
-
-    def test_polling_an_unchanged_library_sends_nothing(self):
-        self.ready_item()
-        status, _, body = self.request("GET", "/api/media")
-        version = json.loads(body)["version"]
-        self.assertEqual(self.request("GET", f"/api/media?version={version}")[:3:2], (204, b""))
-        self.request("PATCH", f"/api/media/{VIDEO_ID}", {"note": "Nouvelle"})
-        status, _, body = self.request("GET", f"/api/media?version={version}")
-        self.assertEqual((status, json.loads(body)["items"][0]["note"]), (200, "Nouvelle"))
 
     def test_files_are_confirmed_from_their_hash(self):
         self.ready_item()
@@ -2304,10 +1621,13 @@ class HTTPTests(ServerTestCase):
 
     def test_batch_tag_and_delete(self):
         self.ready_item()
+        self.server.store.update(VIDEO_ID, files={"original.mp4": {"sha256": "0" * 64, "size": 100}})
         post, _ = self.server.store.add(POST_URL, [])
         body = {"action": "tag", "ids": [VIDEO_ID, post["id"], VIDEO_ID], "tag": " Lu "}
         self.assertEqual(json.loads(self.request("POST", "/api/media/batch", body)[2]), {"updated": 2})
         self.assertEqual(self.server.store.get(post["id"])["tags"], ["lu"])
+        # The tag reaches the record kept with the archive's files.
+        self.assertEqual(json.loads((self.server.storage.directory(VIDEO_ID) / "archive.json").read_text())["tags"], ["lu"])
         self.assertEqual(json.loads(self.request("POST", "/api/media/batch", body)[2]), {"updated": 0})
         status, _, result = self.request("POST", "/api/media/batch", {"action": "delete", "ids": [VIDEO_ID, post["id"], "x-404"]})
         self.assertEqual((status, json.loads(result)), (200, {"deleted": 1, "skipped": 1}))  # the queued post is kept
@@ -2321,8 +1641,8 @@ class HTTPTests(ServerTestCase):
 
     def test_repeated_batch_delete_never_purges_and_purge_requires_trash(self):
         self.ready_item()
-        path = f"/api/media/{VIDEO_ID}/purge"
-        self.assertEqual(self.request("POST", path, {})[0], 400)
+        purge = {"action": "purge", "ids": [VIDEO_ID]}
+        self.assertEqual(self.request("POST", "/api/media/batch", purge)[0], 400)
         body = {"action": "delete", "ids": [VIDEO_ID]}
         self.assertEqual(json.loads(self.request("POST", "/api/media/batch", body)[2])["deleted"], 1)
         trashed_at = self.server.store.get(VIDEO_ID)["deleted_at"]
@@ -2338,7 +1658,7 @@ class HTTPTests(ServerTestCase):
         self.assertIsNotNone(self.server.store.get(VIDEO_ID))
         self.assertIsNotNone(self.server.store.get(other["id"]))
         self.request("POST", "/api/media/batch", {"action": "restore", "ids": [VIDEO_ID]})
-        self.assertEqual(self.request("POST", path, {})[0], 400)
+        self.assertEqual(self.request("POST", "/api/media/batch", purge)[0], 400)
         self.assertTrue(self.server.storage.directory(VIDEO_ID).exists())
 
     def test_emptying_the_trash_skips_archives_being_processed(self):
@@ -2366,8 +1686,31 @@ class HTTPTests(ServerTestCase):
         (directory / "thumbnail.jpg").write_bytes(b"jpg")
         return self.server.store.update(post["id"], status="ready", thumbnail="thumbnail.jpg")
 
-    def test_private_tag_is_stored_under_one_name(self):
-        self.assertEqual(clean_tags(["Privé", "PRIVATE", "prive", "privée"]), ["private", "privée"])
+    def test_locked_sync_never_names_private_archives(self):
+        self.ready_item()
+        post = self.private_post()  # private from the start: nothing to tell
+        first = self.changes()
+        self.assertEqual((first["removed"], first["hidden_since"]), ([], None))
+        # A public archive that becomes private is signalled without its id, and so are its later changes.
+        self.server.store.update(VIDEO_ID, tags=["private"])
+        for note in ("", "later"):
+            self.server.store.update(VIDEO_ID, note=note)
+            delta = self.changes(first["cursor"])
+            self.assertEqual((delta["items"], delta["removed"], delta["total"]), ([], [], 0))
+            self.assertGreaterEqual(delta["hidden_since"], first["latest"])
+            self.assertNotIn(VIDEO_ID, json.dumps(delta))
+        # Readers that start afterwards are told nothing new: the signal is older than their start.
+        again = self.changes()
+        self.assertLess(again["hidden_since"], again["latest"])
+        # Deleted private archives stay unnamed; unlocked readers get everything.
+        unlocked = self.changes(first["cursor"], headers={"X-Private-Unlock": self.unlock()})
+        self.assertEqual([item["id"] for item in unlocked["items"]], [VIDEO_ID])
+        for media_id in (VIDEO_ID, post["id"]):
+            self.server.store.delete(media_id)
+        delta = self.changes(first["cursor"])
+        self.assertEqual((delta["items"], delta["removed"]), ([], []))
+        self.assertEqual(sorted(self.changes(first["cursor"], headers={"X-Private-Unlock": self.unlock()})["removed"]),
+                         sorted([VIDEO_ID, post["id"]]))
 
     def test_private_archives_are_hidden_until_unlocked(self):
         self.ready_item()
@@ -2375,11 +1718,11 @@ class HTTPTests(ServerTestCase):
         self.assertEqual(post["tags"], ["private", "voyage"])
         locked = self.changes()
         self.assertEqual(([item["id"] for item in locked["items"]], locked["removed"], locked["total"], locked["unlocked"]),
-                         ([VIDEO_ID], [post["id"]], 1, False))
-        self.assertEqual([item["id"] for item in json.loads(self.request("GET", "/api/media")[2])["items"]], [VIDEO_ID])
-        for method, path, data in (("GET", f"/api/media/{post['id']}", None), ("GET", f"/api/media/{post['id']}/metadata", None),
+                         ([VIDEO_ID], [], 1, False))
+        self.assertNotIn(post["id"], json.dumps(locked))
+        for method, path, data in (("GET", f"/api/media/{post['id']}/metadata", None),
                                    ("GET", f"/api/media/{post['id']}/file/thumbnail", None), ("GET", f"/api/media/{post['id']}/export", None),
-                                   ("PATCH", f"/api/media/{post['id']}", {"note": "?"}), ("DELETE", f"/api/media/{post['id']}", None)):
+                                   ("PATCH", f"/api/media/{post['id']}", {"note": "?"})):
             with self.subTest(method=method, path=path):
                 self.assertEqual(self.request(method, path, data)[0], 404)
         self.assertEqual(json.loads(self.request("POST", "/api/media/batch", {"action": "delete", "ids": [post["id"]]})[2])["deleted"], 0)
@@ -2430,7 +1773,7 @@ class HTTPTests(ServerTestCase):
         self.assertEqual(exported("", {"X-Private-Unlock": token}), [VIDEO_ID])
         self.assertEqual(exported(f"private=1&unlock={token}"), sorted([VIDEO_ID, post["id"]]))
         # A hidden archive is neither shown as a duplicate nor taken out of the trash.
-        with patch("archiver.server.dependencies", return_value={"yt-dlp": True}):
+        with patch("archiver.server.dependencies", return_value={}):
             self.assertEqual(json.loads(self.request("POST", "/api/media", {"url": POST_URL})[2]), {"created": False, "private": True})
             self.assertEqual(self.request("POST", "/api/media", {"url": POST_URL}, {"X-Private-Unlock": token})[0], 200)
             other = "https://x.com/demo/status/123"
@@ -2506,22 +1849,6 @@ class HTTPTests(ServerTestCase):
         self.assertTrue(page["reset"])
         self.assertEqual(len(page["items"]), 1)
 
-    def test_library_sync_migrates_an_existing_catalog(self):
-        self.ready_item()
-        other, _ = self.server.store.add(POST_URL, ["kept"])
-        self.server.store.trash([other["id"]])
-        # Simulate the previous schema, which has no revision journal.
-        with closing(self.server.store.connect()) as db, db:
-            for event in ("insert", "update", "delete"):
-                db.execute(f"DROP TRIGGER media_sync_{event}")
-            db.execute("DROP TABLE media_changes")
-        migrated = Store(self.temp.name)
-        page = migrated.changes()
-        self.assertEqual({item["id"] for item in page["items"]}, {VIDEO_ID, other["id"]})
-        self.assertTrue(migrated.get(other["id"])["deleted_at"])
-        migrated.update(VIDEO_ID, note="After migration")
-        self.assertEqual(migrated.changes(page["cursor"])["items"][0]["note"], "After migration")
-
     def test_errors_follow_the_interface_language(self):
         french = json.loads(self.request("POST", "/api/media", {"url": "http://localhost/x"}, {"X-Language": "fr"})[2])["error"]
         english = json.loads(self.request("POST", "/api/media", {"url": "http://localhost/x"}, {"X-Language": "en"})[2])["error"]
@@ -2542,20 +1869,21 @@ class HTTPTests(ServerTestCase):
         # Stored errors are translated when served, including nested messages and parameters.
         self.server.store.add(POST_URL, [])
         self.server.store.update(f"x-{POST_ID}", status="error", error="A photo or video of the post could not be downloaded: The site refused access to the page (HTTP 403). It must be public and accessible without logging in.")
-        item = json.loads(self.request("GET", f"/api/media/x-{POST_ID}", headers={"X-Language": "fr"})[2])
+        items = json.loads(self.request("GET", "/api/media/changes", headers={"X-Language": "fr"})[2])["items"]
+        item = next(item for item in items if item["id"] == f"x-{POST_ID}")
         self.assertEqual(item["error"], "Un média du post n’a pas pu être téléchargé : Le site a refusé l’accès à la page (HTTP 403). Elle doit être publique et accessible sans connexion.")
         self.assertEqual(i18n.translate("Raw yt-dlp output", "fr"), "Raw yt-dlp output")
 
     def test_rejects_cross_origin_mutation_and_host_rebinding(self):
         self.assertEqual(self.request("POST", "/api/media", {"url": VIDEO_URL}, {"Origin": "https://evil.test"})[0], 403)
-        self.assertEqual(self.request("GET", "/api/media", headers={"Host": "evil.test"})[0], 403)
+        self.assertEqual(self.request("GET", "/api/media/changes", headers={"Host": "evil.test"})[0], 403)
         self.assertEqual(self.request("GET", "/../catalog.sqlite3")[0], 404)
         self.assertEqual(self.request("GET", "/api/media/../../file/playback")[0], 404)
 
     def test_login_protects_api_and_files_but_not_health_or_assets(self):
         self.ready_item()
         self.cookie = ""
-        self.assertEqual(self.request("GET", "/api/media")[0], 401)
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 401)
         self.assertEqual(self.request("GET", f"/api/media/{VIDEO_ID}/file/original")[0], 401)
         self.assertEqual(self.request("GET", "/api/export")[0], 401)
         self.assertEqual(self.request("PATCH", f"/api/media/{VIDEO_ID}", {"note": "x"})[0], 401)
@@ -2567,9 +1895,9 @@ class HTTPTests(ServerTestCase):
         self.assertEqual((status, headers["Location"]), (303, "/login"))
         status, headers, _ = self.request("GET", "/share?url=https://example.org/a")
         self.assertEqual(headers["Location"], "/login?next=%2Fshare%3Furl%3Dhttps%3A%2F%2Fexample.org%2Fa")
-        self.assertEqual(self.request("GET", "/api/media", headers={"Cookie": "archiver_session=forged"})[0], 401)
+        self.assertEqual(self.request("GET", "/api/media/changes", headers={"Cookie": "archiver_session=forged"})[0], 401)
 
-    def test_login_logout_and_api_credentials(self):
+    def test_login_logout_and_credentials_sent_with_a_request_are_refused(self):
         self.cookie = ""
         state = json.loads(self.request("GET", "/api/auth")[2])
         self.assertEqual(state, {"configured": True, "signed_in": False})
@@ -2582,20 +1910,18 @@ class HTTPTests(ServerTestCase):
         self.assertIn("SameSite=Lax", cookie)
         self.assertNotIn("Secure", cookie)
         self.cookie = cookie.split(";")[0]
-        self.assertEqual(self.request("GET", "/api/media")[0], 200)
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 200)
         self.assertEqual(self.request("GET", "/")[0], 200)
         self.assertTrue(json.loads(self.request("GET", "/api/auth")[2])["signed_in"])
         # Once signed in, the login page returns to the requested page, on this site only.
         self.assertEqual(self.request("GET", "/login?next=/share?url=x")[1]["Location"], "/share?url=x")
         self.assertEqual(self.request("GET", "/login?next=//evil.test")[1]["Location"], "/")
         self.assertEqual(self.request("POST", "/api/auth/logout")[0], 200)
-        self.assertEqual(self.request("GET", "/api/media")[0], 401)
-        # API clients, like the iPhone shortcut, may send the credentials instead; no browser prompt.
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 401)
+        # The account's credentials sent with a request open nothing: only a session does. No browser prompt.
         good = base64.b64encode(f"admin:{PASSWORD}".encode()).decode()
-        bad = base64.b64encode(b"admin:nope").decode()
         self.cookie = ""
-        self.assertEqual(self.request("GET", "/api/media", headers={"Authorization": "Basic " + good})[0], 200)
-        status, headers, _ = self.request("GET", "/api/media", headers={"Authorization": "Basic " + bad})
+        status, headers, _ = self.request("GET", "/api/media/changes", headers={"Authorization": "Basic " + good})
         self.assertEqual(status, 401)
         self.assertNotIn("WWW-Authenticate", headers)
         # Behind an HTTPS proxy, the cookie is restricted to HTTPS.
@@ -2613,7 +1939,7 @@ class HTTPTests(ServerTestCase):
         status, headers, _ = self.request("POST", "/api/auth/setup", {"username": "me", "password": PASSWORD})
         self.assertEqual(status, 200)
         self.cookie = headers["Set-Cookie"].split(";")[0]
-        self.assertEqual(self.request("GET", "/api/media")[0], 200)
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 200)
         # Never a second account, even from a signed-in session.
         self.assertEqual(self.request("POST", "/api/auth/setup", {"username": "intruder", "password": PASSWORD})[0], 409)
         self.cookie = ""
@@ -2637,7 +1963,7 @@ class HTTPTests(ServerTestCase):
         # The token signs requests from that origin; without it, or with another, they stay refused.
         signed = {**extension, "Authorization": f"Bearer {token}"}
         self.assertEqual(self.request("POST", "/api/media", {"url": VIDEO_URL}, signed)[0], 201)
-        self.assertEqual(self.request("GET", "/api/media", headers=signed)[0], 200)
+        self.assertEqual(self.request("GET", "/api/media/changes", headers=signed)[0], 200)
         self.assertEqual(self.request("POST", "/api/media", {"url": POST_URL}, extension)[0], 403)
         self.assertEqual(self.request("POST", "/api/media", {"url": POST_URL}, {**extension, "Authorization": "Bearer nope"})[0], 403)
         # The browser's cookie is still not served to another origin, with or without a wrong token.
@@ -2648,13 +1974,13 @@ class HTTPTests(ServerTestCase):
         unlock = json.loads(self.request("POST", "/api/private/unlock", {"password": PASSWORD})[2])["token"]
         status, headers, _ = self.request("POST", "/api/auth/logout", {}, signed)
         self.assertEqual((status, "Set-Cookie" in headers), (200, False))
-        self.assertEqual(self.request("GET", "/api/media", headers=signed)[0], 401)
-        self.assertEqual(self.request("GET", "/api/media")[0], 200)
+        self.assertEqual(self.request("GET", "/api/media/changes", headers=signed)[0], 401)
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 200)
         self.assertTrue(self.server.auth.unlocked(unlock))
         # Changing the password closes the client's session like every other.
         token = json.loads(self.request("POST", "/api/auth/login", {**credentials, "token": True}, extension)[2])["token"]
         self.request("POST", "/api/account/password", {"current": PASSWORD, "password": PASSWORD + "!"})
-        self.assertEqual(self.request("GET", "/api/media", headers={"Authorization": f"Bearer {token}", "Cookie": ""})[0], 401)
+        self.assertEqual(self.request("GET", "/api/media/changes", headers={"Authorization": f"Bearer {token}", "Cookie": ""})[0], 401)
 
     def test_article_texts_for_searching(self):
         def article(url, tags, html):
@@ -2681,11 +2007,11 @@ class HTTPTests(ServerTestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.server.auth.unlocks, {})
         # The old sessions are closed; the one that changed it gets a new one.
-        self.assertEqual(self.request("GET", "/api/media")[0], 401)
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 401)
         self.cookie = other
-        self.assertEqual(self.request("GET", "/api/media")[0], 401)
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 401)
         self.cookie = headers["Set-Cookie"].split(";")[0]
-        self.assertEqual(self.request("GET", "/api/media")[0], 200)
+        self.assertEqual(self.request("GET", "/api/media/changes")[0], 200)
         self.assertTrue(self.server.auth.check("admin", "a new long password"))
         self.assertFalse(self.server.auth.check("admin", PASSWORD))
 
@@ -2695,14 +2021,23 @@ class HTTPTests(ServerTestCase):
         for _ in range(3):
             self.assertEqual(self.request("POST", "/api/auth/login", {"username": "admin", "password": "wrong password"})[0], 401)
         self.assertEqual(self.request("POST", "/api/auth/login", {"username": "admin", "password": PASSWORD})[0], 429)
-        good = base64.b64encode(f"admin:{PASSWORD}".encode()).decode()
-        self.assertEqual(self.request("GET", "/api/media", headers={"Authorization": "Basic " + good})[0], 429)
         self.server.auth.throttle.failures.clear()
         self.assertEqual(self.request("POST", "/api/auth/login", {"username": "admin", "password": PASSWORD})[0], 200)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
 class PlaybackTests(unittest.TestCase):
+    def test_transparent_images_get_a_white_background_in_thumbnails(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STORAGE_BACKEND": "local"}):
+            source = Path(temp) / "logo.png"
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=black@0:size=64x64,format=rgba",
+                            "-frames:v", "1", str(source)], check=True)
+            worker = Downloader(Store(Path(temp) / "db"), Storage(temp))
+            thumbnail = worker.make_thumbnail(source, Path(temp) / "thumbnail.jpg")
+            pixels = subprocess.check_output(["ffmpeg", "-nostdin", "-v", "error", "-i", str(thumbnail),
+                                              "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+            self.assertGreater(min(pixels), 240)
+
     def test_audio_is_preserved_when_transcoding_or_remuxing(self):
         for codec in ("libopus", "aac"):
             with self.subTest(codec=codec), tempfile.TemporaryDirectory() as temp, patch.dict(
@@ -2874,6 +2209,20 @@ class EncryptedStorageTests(unittest.TestCase):
     def folder(self, item):
         return self.storage.directory(self.storage.folder(item))
 
+    def test_edits_during_upload_are_in_the_recovery_record(self):
+        publish = self.storage.publish
+
+        def edit_during_upload(media_id, files):
+            self.store.update(media_id, note='Edited while uploading', tags=['private'])
+            return publish(media_id, files)
+
+        with patch.object(self.storage, 'publish', side_effect=edit_during_upload):
+            item = self.archive()
+        with self.storage.read(item, manifest.NAME) as stream:
+            record = json.load(stream)
+        self.assertEqual(record['note'], item['note'])
+        self.assertEqual(record['tags'], ['private'])
+
     def names(self, item):
         return sorted(path.name for path in self.folder(item).iterdir())
 
@@ -2919,6 +2268,94 @@ class EncryptedStorageTests(unittest.TestCase):
         path.write_bytes(data)
         self.maintenance.verify(item)
         self.assertEqual(self.store.get(item["id"])["integrity"], "damaged")
+
+    def test_changes_made_during_a_conversion_reach_the_record(self):
+        self.settings("")
+        item = self.archive()
+        self.settings(KEY)
+        convert = self.storage.convert
+
+        def edited_meanwhile(item, encrypt):
+            convert(item, encrypt)
+            self.store.update(item["id"], note="Written meanwhile", tags=["private"])
+
+        with patch.object(self.storage, "convert", side_effect=edited_meanwhile):
+            self.assertEqual(self.maintenance.convert(True), (1, []))
+        record = json.loads(self.storage.content(self.store.get(item["id"]), "archive.json"))
+        self.assertEqual((record["note"], record["tags"]), ("Written meanwhile", ["private"]))
+
+    def test_changes_made_while_the_record_is_written_reach_it(self):
+        self.settings("")
+        item = self.archive()
+        self.settings(KEY)
+        put, calls = self.storage.put, []
+
+        def put_then_edit(item, name, data):
+            put(item, name, data)
+            calls.append(item["encrypted"])
+            if len(calls) == 1:  # the catalog changes right after it was read for this record
+                self.store.update(item["id"], note="Written meanwhile", tags=["private"])
+
+        with patch.object(self.storage, "put", side_effect=put_then_edit):
+            self.assertEqual(self.maintenance.convert(True), (1, []))
+        record = json.loads(self.storage.content(self.store.get(item["id"]), "archive.json"))
+        self.assertEqual((record["note"], record["tags"], calls), ("Written meanwhile", ["private"], [1, 1]))
+
+        def put_after_conversion(item, name, data):
+            calls.append(item["encrypted"])
+            if len(calls) == 1:  # the archive is decrypted between the reading of the catalog and this writing
+                self.storage.convert(item, False)
+                self.store.update(item["id"], encrypted=0)
+                self.storage.prune(self.store.get(item["id"]))
+            put(item, name, data)
+
+        calls.clear()
+        with patch.object(self.storage, "put", side_effect=put_after_conversion):
+            manifest.publish(self.store, self.storage, item["id"])
+        self.assertEqual(calls, [1, 0])
+        self.assertEqual(json.loads(self.storage.content(self.store.get(item["id"]), "archive.json"))["note"], "Written meanwhile")
+        self.assertEqual(self.names(self.store.get(item["id"])), ["archive.json", "article.html", "image.bin"])
+        self.assertFalse(self.folder({**item, "encrypted": 1}).exists())
+
+    def test_conversion_reports_unstable_record_and_can_be_retried(self):
+        self.settings("")
+        item = self.archive()
+        plain_folder = self.folder(item)
+        self.settings(KEY)
+        put, calls = self.storage.put, []
+
+        def concurrent_edit(item, name, data):
+            calls.append(1)
+            latest = self.store.update(item["id"], note=f"Edit {len(calls)}", tags=["private"])
+            # The other writer finishes first; this publication then overwrites it with its old snapshot.
+            put(latest, name, manifest.render(latest))
+            put(item, name, data)
+
+        with patch.object(self.storage, "put", side_effect=concurrent_edit):
+            done, failed = self.maintenance.convert(True)
+        self.assertEqual(done, 0)
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0][0], item["id"])
+        self.assertIn("10 attempts", failed[0][1])
+        self.assertEqual(len(calls), 10)
+        self.assertTrue(plain_folder.exists())  # no pruning after a failed publication
+        self.assertEqual(self.store.get(item["id"])["encrypted"], 1)
+
+        # Retrying must publish even though the files have already been converted.
+        self.assertEqual(self.maintenance.convert(True), (0, []))
+        record = json.loads(self.storage.content(self.store.get(item["id"]), "archive.json"))
+        self.assertEqual((record["note"], record["tags"]), ("Edit 10", ["private"]))
+        self.assertFalse(plain_folder.exists())
+
+    def test_deleting_an_archive_removes_what_an_interrupted_conversion_left(self):
+        self.settings("")
+        item = self.archive()
+        self.settings(KEY)
+        self.storage.convert(item, True)  # interrupted before the archive's new form was recorded
+        folders = [self.folder(item), self.folder({**item, "encrypted": 1})]
+        self.assertTrue(all(folder.exists() for folder in folders))
+        self.storage.remove(item)
+        self.assertFalse(any(folder.exists() for folder in folders))
 
     def test_library_is_encrypted_and_decrypted_in_place(self):
         encrypted = self.archive()
@@ -2991,7 +2428,6 @@ class EncryptedHTTPTests(ServerTestCase):
         self.assertFalse(directory.exists())  # only the encrypted folder is left
         folder = self.server.storage.directory(self.server.storage.folder(self.server.store.get(item["id"])))
         self.assertEqual(sorted(path.name for path in folder.iterdir()), ["archive.json.age", "original.mp4.age"])
-        self.assertTrue(json.loads(self.request("GET", "/api/system")[2])["encryption"])
         url = f"/api/media/{VIDEO_ID}/file/playback"
         status, headers, body = self.request("GET", url, headers={"Range": "bytes=65530-65545"})
         self.assertEqual((status, headers["Content-Range"]), (206, "bytes 65530-65545/200000"))
@@ -3007,10 +2443,6 @@ class EncryptedHTTPTests(ServerTestCase):
             name = next(name for name in archive.namelist() if name.endswith(f"{VIDEO_ID}/original.mp4"))
             self.assertEqual(archive.read(name), content(200_000))
             self.assertFalse([name for name in archive.namelist() if name.endswith(crypto.SUFFIX)])
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 RELAY_TOKEN = "r" * 40
@@ -3045,7 +2477,7 @@ class RelayTests(ServerTestCase):
         self.assertEqual(self.request("POST", f"/api/relay/links/{VIDEO_ID}", {"state": "archived"}, wrong)[0], 401)
         self.assertEqual(self.server.store.get(VIDEO_ID)["status"], "error")
         # The token opens nothing else.
-        self.assertEqual(self.request("GET", "/api/media", headers=self.bearer)[0], 401)
+        self.assertEqual(self.request("GET", "/api/media/changes", headers=self.bearer)[0], 401)
         self.server.relay_token = None
         self.assertEqual(self.request("GET", "/api/relay/links", headers=self.bearer)[0], 404)
 
@@ -3107,3 +2539,7 @@ class RelayTests(ServerTestCase):
             self.assertEqual(self.relay.poll(), 0)
         self.assertEqual(self.relay.failures, {})
         self.assertEqual(self.server.store.get(VIDEO_ID)["status"], "error")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 import threading
-from importlib.util import find_spec
+import time
 from collections import deque
 from datetime import date
 from email.message import Message
@@ -89,13 +89,22 @@ MAX_SUBTITLES = 12
 MAX_FILE_BYTES = 4 * 1024 * 1024 * 1024
 
 
-# What another address would not change: deleted content, a site that no longer exists.
-FINAL = (Final, net.UnknownHost)
+# What an archive may lack without failing, kept in its details as `warnings` and named by the interface:
+# posts of its thread, the post it answers, media of the post it quotes, the end of a long text, subtitles,
+# images of a page.
+WARNINGS = ("thread", "reply_to", "quote", "text", "subtitles", "images")
+
+
+class MissingTools(RuntimeError):
+    """This computer lacks a tool the archive needs: another one, such as a relay, may have it."""
+
+
+# What another address would not change: deleted content, a site that no longer exists, a tool missing here.
+FINAL = (Final, net.UnknownHost, MissingTools)
 
 
 def dependencies():
-    return {"yt-dlp": find_spec("yt_dlp") is not None,
-            **{name: bool(shutil.which(name)) for name in ("ffmpeg", "ffprobe", "node")}}
+    return {name: bool(shutil.which(name)) for name in ("ffmpeg", "ffprobe", "node")}
 
 
 def subtitle_choices(info):
@@ -138,7 +147,11 @@ class Downloader:
         self.queue = queue.Queue()
         self.stopping = threading.Event()
         self.process_lock = threading.Lock()
-        self.process = None
+        self.processes = set()
+        # One archive at a time per platform, so that a long download only holds back the links of its own
+        # platform: `work` hands each link to the lane of its platform, a queue and the thread that empties it.
+        self.lanes = {}
+        self.warnings = {}  # archive id -> what the archive being made lacks
         self.thread = threading.Thread(target=self.work, daemon=True, name="archive-worker")
 
     def start(self):
@@ -156,11 +169,17 @@ class Downloader:
     def stop(self):
         self.stopping.set()
         with self.process_lock:
-            if self.process and self.process.poll() is None:
-                os.killpg(self.process.pid, signal.SIGTERM)
+            for process in self.processes:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
         self.queue.put(None)
-        if self.thread.is_alive():
-            self.thread.join(timeout=8)
+        lanes = list(self.lanes.values())
+        for jobs, _ in lanes:
+            jobs.put(None)
+        deadline = time.monotonic() + 8
+        for thread in (self.thread, *(thread for _, thread in lanes)):
+            if thread.is_alive():
+                thread.join(timeout=max(0, deadline - time.monotonic()))
 
     def run(self, command, on_line=None, keep=12):
         """Run a program and return the last `keep` lines of its output."""
@@ -172,7 +191,7 @@ class Downloader:
                 command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", bufsize=1, start_new_session=True,
             )
-            self.process = process
+            self.processes.add(process)
         try:
             for line in process.stdout:
                 line = line.strip()
@@ -194,7 +213,7 @@ class Downloader:
                     process.wait()
             process.stdout.close()
             with self.process_lock:
-                self.process = None
+                self.processes.discard(process)
 
     def work(self):
         while not self.stopping.is_set():
@@ -203,6 +222,28 @@ class Downloader:
                 media_id = self.queue.get(timeout=RETRY_CHECK_SECONDS)
             except queue.Empty:
                 continue
+            if media_id is None:
+                break
+            try:
+                item = self.store.get(media_id)
+            except Exception:
+                log.exception("Archive %s: not started", media_id)
+                item = None
+            if item is None:
+                self.queue.task_done()
+                continue
+            jobs, thread = self.lanes.get(item["platform"]) or (None, None)
+            if thread is None or not thread.is_alive():
+                jobs = queue.Queue()
+                thread = threading.Thread(target=self.serve, args=(jobs,), daemon=True, name=f"archive-{item['platform']}")
+                self.lanes[item["platform"]] = (jobs, thread)
+                thread.start()
+            jobs.put(media_id)
+
+    def serve(self, jobs):
+        """Archive the links of one platform, one after the other."""
+        while not self.stopping.is_set():
+            media_id = jobs.get()
             if media_id is None:
                 break
             try:
@@ -231,7 +272,8 @@ class Downloader:
             message = proxy.redact(str(error))
             log.warning("Archive %s: %s", media_id, message)
             if not self.stopping.is_set():
-                self.store.fail(media_id, message[-2500:])
+                # The failure itself, or the one `attempt` reports with the route it tried.
+                self.store.fail(media_id, message[-2500:], final=isinstance(error, Final) or isinstance(error.__cause__, Final))
         finally:
             if self.store.get(media_id) is None:
                 # Deleted while it was being processed: leave no files behind.
@@ -258,13 +300,22 @@ class Downloader:
                          media_id, proxy.redact(str(error))[-300:])
                 self.store.update(media_id, status="downloading", progress=0)
 
+    def warn(self, item, kind):
+        """Note that the archive being made of `item` lacks something, among WARNINGS: it is kept all the same."""
+        if kind not in WARNINGS:
+            raise ValueError(f"Unknown warning: {kind}")
+        kinds = self.warnings.setdefault(item["id"], [])
+        if kind not in kinds:
+            kinds.append(kind)
+
     def download(self, media_id):
+        self.warnings.pop(media_id, None)  # those of a previous attempt
         item = self.store.get(media_id)
         if self.storage.mode == "s3" and self.adopt(item):
             return
         missing = [name for name, available in dependencies().items() if not available]
         if missing:
-            raise Final("Missing tools: " + ", ".join(missing) + ". See the README or use Docker.")
+            raise MissingTools("Missing tools: " + ", ".join(missing) + ". See the README or use Docker.")
         with net.reading(item["languages"]):
             if item["platform"] == "Web":
                 return self.download_web(item)
@@ -273,8 +324,9 @@ class Downloader:
             except integrations.Refused:
                 raise RuntimeError(BOT_CHECK.format(platform=item["platform"])) from None
 
-    def download_video(self, item, options=()):
-        """Archive a single video with yt-dlp, which reads the platform itself; `options` are added to its command."""
+    def download_video(self, item, options=(), title=None):
+        """Archive a single video with yt-dlp, which reads the platform itself; `options` are added to its command,
+        and `title(text)` gives the video's title from the one the platform states."""
         media_id = item["id"]
         directory = self.storage.directory(media_id)
         directory.mkdir(parents=True, exist_ok=True)
@@ -289,7 +341,7 @@ class Downloader:
                 final_path = Path(line.removeprefix("archiver-file:")).resolve()
             if not info_loaded and info_path.exists():
                 try:
-                    self.read_info(media_id, info_path)
+                    self.read_info(media_id, info_path, title)
                     info_loaded = True
                 except (ValueError, OSError):
                     pass
@@ -322,7 +374,7 @@ class Downloader:
             # Age-restricted videos are only served to signed-in viewers, even through the embedded player.
             if "Sign in to confirm your age" in str(error):
                 raise Final(AGE_RESTRICTED.format(platform=item["platform"])) from None
-            # YouTube asks for a sign-in when it distrusts the server's IP address, often a datacenter one.
+            # A platform may ask for a sign-in when it distrusts the server's IP address, often a datacenter one.
             if "Sign in to confirm you’re not a bot" in str(error) or "Sign in to confirm you're not a bot" in str(error):
                 raise RuntimeError(BOT_CHECK.format(platform=item["platform"])) from None
             raise
@@ -330,7 +382,7 @@ class Downloader:
             raise RuntimeError("No video was retrieved. Ongoing live streams and upcoming premieres are not supported.")
         if not info_path.exists():
             raise RuntimeError("The video’s metadata could not be retrieved.")
-        self.read_info(media_id, info_path)
+        self.read_info(media_id, info_path, title)
         self.finish_video(media_id, final_path, info_path, self.fetch_subtitles(item, info_path, options))
 
     def fetch_subtitles(self, item, info_path, options=()):
@@ -358,6 +410,7 @@ class Downloader:
                 raise
             # Some tracks may have been written before the failure: they are kept.
             log.info("Archive %s: subtitles incomplete: %s", item["id"], proxy.redact(str(error))[-300:])
+            self.warn(item, "subtitles")
         tracks = [{"file": f"original.{key}.vtt", "language": language, "name": name, "automatic": automatic}
                   for key, language, name, automatic in chosen
                   if (directory / f"original.{key}.vtt").is_file() and (directory / f"original.{key}.vtt").stat().st_size]
@@ -400,14 +453,13 @@ class Downloader:
         manifest.publish(self.store, self.storage, item["id"])
         return True
 
-    def read_info(self, media_id, path):
+    def read_info(self, media_id, path, title=None):
         info = json.loads(path.read_text())
         date = info.get("upload_date")
         published = f"{date[:4]}-{date[4:6]}-{date[6:]}" if date and re.fullmatch(r"\d{8}", date) else None
-        # Facebook prefixes titles with engagement counts: "9.9K views · 341 reactions | …".
-        title = re.sub(r"^[^|]*\b(?:views?|reactions?|vues?|réactions?)\b[^|]*\|\s*", "", info.get("title") or "")
+        stated = info.get("title") or ""
         self.store.update(
-            media_id, title=title or media_id,
+            media_id, title=(title(stated) if title else stated) or media_id,
             author=info.get("channel") or info.get("uploader"),
             published_at=published, duration=info.get("duration"),
             width=info.get("width"), height=info.get("height"),
@@ -496,7 +548,7 @@ class Downloader:
             return [index for index, attachment in enumerate(attachments) if attachment["post"] == number
                     and (attachment.get(context, False) if context else not (attachment.get("quoted") or attachment.get("replied")))]
 
-        def other(post, context):
+        def other(post, number, context):
             """A post shown with the archived one, the one it answers or quotes: its text and where its media are."""
             return post and {**{key: value for key, value in post.items() if key != "assets"}, "media": media(number, context)}
 
@@ -504,8 +556,8 @@ class Downloader:
         for number, post in enumerate(posts):
             stored_posts.append({
                 **{key: post[key] for key in ("id", "url", "author", "handle", "published_at", "text")},
-                **({"reply_to": other(post["reply_to"], "replied")} if post.get("reply_to") else {}),
-                "quote": other(post["quote"], "quoted"), "media": media(number, None),
+                **({"reply_to": other(post["reply_to"], number, "replied")} if post.get("reply_to") else {}),
+                "quote": other(post["quote"], number, "quoted"), "media": media(number, None),
             })
         # The cover is the post's own medium; one of a post it answers or quotes only when it has none.
         cover = next((attachment for attachment in attachments if not (attachment.get("quoted") or attachment.get("replied"))),
@@ -522,7 +574,11 @@ class Downloader:
 
         The hashes and sizes are those of the content, whether or not it is stored encrypted."""
         hashes = {file.name: manifest.hash_file(file) for file in files}
-        self.store.update(media_id, files=hashes, integrity="ok", integrity_checked_at=now(), **values)
+        details = dict(values.pop("details", None) or self.store.get(media_id)["details"] or {})
+        details.pop("warnings", None)
+        if warnings := self.warnings.pop(media_id, None):
+            details["warnings"] = warnings
+        self.store.update(media_id, files=hashes, integrity="ok", integrity_checked_at=now(), details=details, **values)
         record = self.storage.directory(media_id) / manifest.NAME
         record.write_bytes(manifest.render({**self.store.get(media_id), "status": "ready"}))
         if self.storage.mode == "s3":
@@ -530,6 +586,9 @@ class Downloader:
         stored = sum(entry["size"] for entry in hashes.values()) + record.stat().st_size
         encrypted = self.storage.publish(media_id, [*files, record])
         self.store.update(media_id, status="ready", progress=100, error=None, encrypted=int(encrypted), storage_bytes=stored)
+        # Edits made while files were uploading could not publish a record yet. Keep the recovery
+        # record in sync now that the archive is ready, including its current privacy tags.
+        manifest.publish(self.store, self.storage, media_id)
         self.storage.cleanup_work(media_id)
 
     def probe_visual(self, path):
@@ -546,7 +605,9 @@ class Downloader:
 
     def make_thumbnail(self, source, thumbnail):
         self.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source),
-                  "-vf", "scale='min(640,iw)':-2", "-frames:v", "1", "-update", "1", str(thumbnail)])
+                  # A transparent image is laid on white, as a page shows it: JPEG would turn its background black.
+                  "-vf", "scale='min(640,iw)':-2,format=rgba,negate,premultiply=inplace=1,negate,format=yuv420p",
+                  "-frames:v", "1", "-update", "1", str(thumbnail)])
         return thumbnail
 
     def download_web(self, item):
@@ -594,6 +655,7 @@ class Downloader:
                 if self.stopping.is_set():
                     raise
                 log.info("Archive %s: image skipped %s: %s", media_id, source, error)
+                self.warn(item, "images")
                 continue
             finally:
                 self.store.update(media_id, progress=round(10 + 90 * (index + 1) / len(sources), 1))

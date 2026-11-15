@@ -70,7 +70,7 @@ def convert(encrypt):
         return 2
     done, failed = Maintenance(store, storage).convert(encrypt)
     for media_id, error in failed:
-        print(f"{media_id}: left as it was ({error})", flush=True)
+        print(f"{media_id}: conversion incomplete ({error}). Run this command again to finish.", flush=True)
     if encrypt:
         print(f"{done} archive(s) encrypted, {len(failed)} failed.", flush=True)
     else:
@@ -106,12 +106,24 @@ def main():
         sys.exit(run_relay())
     if sys.argv[1:] == ["rebuild"]:
         store = Store(os.getenv("DATA_DIR", "./data"))
-        added, known, unreadable = manifest.restore(store, Storage(store.root))
+        try:
+            storage = Storage(store.root)
+        except ValueError as error:
+            print(error, flush=True)
+            sys.exit(2)
+        added, known, unreadable = manifest.restore(store, storage)
         print(f"{added} archive(s) restored to the catalog, {known} already there, {unreadable} unreadable.", flush=True)
         return
+    if sys.argv[1:]:
+        print("Unknown command, or missing argument. See “Commands” in the README.", flush=True)
+        sys.exit(2)
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
-    server = AppServer((host, port), os.getenv("DATA_DIR", "./data"))
+    try:
+        server = AppServer((host, port), os.getenv("DATA_DIR", "./data"))
+    except ValueError as error:
+        print(error, flush=True)
+        sys.exit(2)
 
     def stop(signum, frame):
         threading.Thread(target=server.shutdown, daemon=True).start()

@@ -1,10 +1,7 @@
-import base64
-import hashlib
 import json
 import logging
 import mimetypes
 import re
-import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -186,26 +183,13 @@ class Handler(BaseHTTPRequestHandler):
         return bool(origin and urlparse(origin).netloc != self.headers.get("Host")) or self.headers.get("Sec-Fetch-Site") == "cross-site"
 
     def signed_in(self):
-        """A valid session, from the browser's cookie or sent by the client itself, or the account's
-        credentials in an Authorization header (API clients)."""
-        if self.server.auth.session(self.session_token()) or self.server.auth.session(self.bearer()):
-            return True
-        scheme, _, credentials = self.headers.get("Authorization", "").partition(" ")
-        if scheme.lower() != "basic":
-            return False
-        try:
-            username, _, password = base64.b64decode(credentials, validate=True).decode().partition(":")
-        except (ValueError, UnicodeDecodeError):
-            return False
-        return self.server.auth.check(username, password)
+        """A valid session, from the browser's cookie or sent by the client itself."""
+        return self.server.auth.session(self.session_token()) or self.server.auth.session(self.bearer())
 
     def authenticated(self):
-        try:
-            if self.signed_in():
-                return True
-            self.json({"error": "Log in to continue."}, 401)
-        except TooManyAttempts:
-            self.json({"error": TOO_MANY}, 429)
+        if self.signed_in():
+            return True
+        self.json({"error": "Log in to continue."}, 401)
         return False
 
     def unlocked(self):
@@ -277,11 +261,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authenticated():
             return
         if path == "/api/system":
-            return self.json({
-                "dependencies": dependencies(), "storage": self.server.storage.mode,
-                "encryption": self.server.storage.encryption is not None,
-                "free_bytes": shutil.disk_usage(self.server.store.root).free,
-            })
+            return self.json({"dependencies": dependencies(), "storage": self.server.storage.mode})
         if path == "/api/media/changes":
             query = parse_qs(url.query)
             private = self.unlocked()
@@ -291,18 +271,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"error": "Invalid pagination parameters."}, 400)
             # The interface hides private archives again when its token is no longer accepted.
             return self.json({**page, "unlocked": private})
-        if path == "/api/media":
-            # The interface polls with the version it has: an unchanged library costs no transfer and no rendering.
-            lang = i18n.language(self.headers.get("X-Language"), self.headers.get("Accept-Language"))
-            private = self.unlocked()
-            items = i18n.localize([item for item in self.server.store.all() if private or not is_private(item)], lang)
-            version = hashlib.sha256(json.dumps(items, ensure_ascii=False).encode()).hexdigest()[:16]
-            if parse_qs(url.query).get("version", [""])[0] == version:
-                self.send_response(204)
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                return
-            return self.json({"items": items, "version": version})
         if path == "/api/articles/text":
             # The text of the web pages and of the videos' subtitles, for the interface's search when asked to look inside them. The viewer
             # rewritten in the background keeps the articles in memory, so this rarely reads the storage.
@@ -327,14 +295,12 @@ class Handler(BaseHTTPRequestHandler):
             exported_at = export_time(query.get("at", [""])[0])
             return self.export(items, f"archiver-{exported_at[:10]}", exported_at)
         match = re.fullmatch(
-            rf"/api/media/({MEDIA_ID_PATTERN})(?:/(metadata|export|file/(?:original|playback|thumbnail|info|description|article|subtitles)(?:/[0-9]+)?))?", path,
+            rf"/api/media/({MEDIA_ID_PATTERN})/(metadata|export|file/(?:original|playback|thumbnail|info|description|article|subtitles)(?:/[0-9]+)?)", path,
         )
         if match:
             item = self.server.store.get(match[1])
             if not self.visible(item):
                 return self.json({"error": "Archive not found."}, 404)
-            if not match[2]:
-                return self.json(item)
             if match[2] == "metadata":
                 return self.json({key: item[key] for key in (
                     "id", "title", "author", "published_at", "source_url", "platform",
@@ -376,7 +342,7 @@ class Handler(BaseHTTPRequestHandler):
         if item["status"] != "ready":
             return self.json({"error": "This archive is not available yet."}, 409)
         if kind in ("info", "description", "article"):
-            if index is not None or (kind == "description" and item["platform"] == "YouTube") or (kind == "article" and not is_article(item)):
+            if index is not None or (kind == "description" and "description.txt" not in item["files"]) or (kind == "article" and not is_article(item)):
                 return self.json({"error": "File not found."}, 404)
             filename = {"info": "original.info.json", "description": "description.txt", "article": "article.html"}[kind]
         elif kind == "subtitles":
@@ -463,9 +429,6 @@ class Handler(BaseHTTPRequestHandler):
         self.mutate()
 
     def do_PATCH(self):
-        self.mutate()
-
-    def do_DELETE(self):
         self.mutate()
 
     def mutate(self):
@@ -627,10 +590,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"restored": len(self.server.store.trash([item["id"] for item in items], deleted=False))})
         if data.get("action") == "tag":
             tag = self.tag_name(data.get("tag"))
-            changed = [item["id"] for item in items if tag not in item["tags"]]
-            for media_id in changed:
-                self.server.store.update(media_id, tags=[*self.server.store.get(media_id)["tags"], tag])
-            self.publish_manifests(changed)
+            changed = [item for item in items if tag not in item["tags"]]
+            for item in changed:
+                self.server.store.update(item["id"], tags=[*item["tags"], tag])
+            self.publish_manifests([item["id"] for item in changed])
             return self.json({"updated": len(changed)})
         raise ValueError("Unknown bulk action.")
 
@@ -672,7 +635,7 @@ class Handler(BaseHTTPRequestHandler):
             data = self.body()
             missing = [name for name, present in dependencies().items() if not present]
             if missing:
-                return self.json({"error": "Missing tools: " + ", ".join(missing) + ". See the README."}, 503)
+                return self.json({"error": "Missing tools: " + ", ".join(missing) + ". See the README or use Docker."}, 503)
             # A page is asked for in the languages of the browser that archives it, else in the interface's.
             languages = net.languages(self.headers.get("Accept-Language")) or net.languages(self.headers.get("X-Language"))
             item, created = self.server.store.add(data.get("url"), data.get("tags", []), again=data.get("again") is True,
@@ -694,16 +657,12 @@ class Handler(BaseHTTPRequestHandler):
                            for other in self.server.store.occurrences(item["id"]) if self.visible(other)]
             return self.json({"item": item, "created": created, "restored": restored, "occurrences": occurrences},
                              201 if created else 200)
-        match = re.fullmatch(rf"/api/media/({MEDIA_ID_PATTERN})(/retry|/purge)?", path)
+        match = re.fullmatch(rf"/api/media/({MEDIA_ID_PATTERN})(/retry)?", path)
         if not match:
             return self.json({"error": "Action not found."}, 404)
         item = self.server.store.get(match[1])
         if not self.visible(item):
             return self.json({"error": "Archive not found."}, 404)
-        if match[2] == "/purge" and self.command == "POST":
-            self.body()
-            self.purge(item)
-            return self.json({"deleted": True, "trashed": False})
         if match[2] == "/retry" and self.command == "POST":
             self.body()
             if not self.server.store.retry(item["id"]):
@@ -727,9 +686,4 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 log.exception("archive.json not updated for %s", item["id"])
             return self.json(updated)
-        if not match[2] and self.command == "DELETE":
-            if item["status"] in ACTIVE:
-                return self.json({"error": "Wait for processing to finish before deleting this archive."}, 409)
-            self.server.store.trash([item["id"]])
-            return self.json({"deleted": True, "trashed": True})
         self.json({"error": "Method not allowed."}, 405)

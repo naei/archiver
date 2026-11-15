@@ -2,6 +2,9 @@
 let refreshTask = null;
 let refreshAgain = false;
 let version = 0;
+let passStart = 0; // the library's latest change when it was last read from the start
+let startOver = false; // the next page replaces the library instead of updating it
+let forgetMissing = false; // archives left the library: once it is read, what is still shown of them is closed
 let syncedWith = ""; // the language and unlock token the library was synced with
 let pollTimer;
 // While private archives are shown: the token that unlocks them. It lives only in this page, so a reload hides them.
@@ -28,7 +31,7 @@ async function saveNote() {
   $("#note-status").textContent = t("detail.noteSaving");
   try {
     const updated = await api(`/api/media/${item.id}`, { method: "PATCH", body: JSON.stringify({ note: input.value }) });
-    upsert(updated);
+    if (!upsert(updated)) return;
     if ($("#note-status")) $("#note-status").textContent = t("detail.noteSaved");
   } catch (error) {
     if ($("#note-status")) $("#note-status").textContent = error.message;
@@ -57,7 +60,7 @@ async function applyTitleDialog() {
   $("#title-dialog-confirm").disabled = true;
   try {
     const updated = await api(`/api/media/${item.id}`, { method: "PATCH", body: JSON.stringify({ custom_title: $("#title-dialog-input").value }) });
-    upsert(updated);
+    if (!upsert(updated)) return;
     $("#title-dialog").close();
     render();
     // Updated in place: redrawing the open archive would interrupt its video or a note being typed.
@@ -80,6 +83,21 @@ $("#title-dialog-form").addEventListener("submit", (event) => { event.preventDef
 $("#title-dialog-cancel").addEventListener("click", () => $("#title-dialog").close());
 $("#title-dialog-reset").addEventListener("click", () => { $("#title-dialog-input").value = ""; applyTitleDialog(); });
 
+// After the visible library is complete, release references to archives it no longer contains.
+function forgetMissingArchives() {
+  const known = new Set(state.items.map((item) => item.id));
+  for (const ids of [state.selected, articleCache, state.articleTexts]) {
+    for (const id of [...ids.keys()]) if (!known.has(id)) ids.delete(id);
+  }
+  if ($("#detail-dialog").open && !known.has(state.currentId)) $("#detail-dialog").close();
+  if (titleDialogId && !known.has(titleDialogId)) {
+    $("#title-dialog").close();
+    titleDialogId = null;
+  }
+  if (!$("#player").hidden && player.items.some((item) => !known.has(item.id))) closePlayer();
+  state.tags = existingTags();
+}
+
 function refresh() {
   if (refreshTask) {
     refreshAgain = true;
@@ -101,7 +119,9 @@ async function syncLibrary() {
         const token = unlockToken;
         const data = await api(`/api/media/changes?since=${version}&limit=100`);
         if (key !== syncKey()) { refreshAgain = true; break; }
-        if (data.reset) state.items = [];
+        if (data.reset || startOver) { state.items = []; forgetMissing = true; }
+        if (data.reset || startOver || version === 0) passStart = data.latest;
+        startOver = false;
         const removed = new Set(data.removed);
         const changed = new Map(data.items.map((item) => [item.id, item]));
         state.items = state.items.filter((item) => !removed.has(item.id)).map((item) => {
@@ -111,18 +131,25 @@ async function syncLibrary() {
         });
         state.items.push(...changed.values());
         removed.forEach((id) => state.selected.delete(id));
+        if (removed.size) forgetMissing = true;
         version = data.cursor;
-        // The token expired (a while without requests, or a server restart): private archives were sent as removed.
+        // An archive shown here may have become private. The server does not say which: all is read again.
+        if (data.hidden_since != null && data.hidden_since >= passStart) { version = 0; startOver = true; }
+        // The token expired (a while without requests, or a server restart): private archives are no longer sent.
         if (token && !data.unlocked) lockPrivate("expired");
         // A web page or a subtitled video just archived: its text joins the search inside articles and subtitles.
         if (state.fullText && data.items.some((item) => (isArticle(item) || item.details?.subtitles?.length) && item.status === "ready" && !state.articleTexts.has(item.id))) loadArticleTexts();
         const wasSyncing = state.syncing;
-        more = data.has_more;
+        more = data.has_more || startOver;
         state.syncing = more;
         state.syncTotal = data.total;
         const first = !state.loaded;
         state.loaded = true;
-        if (first || data.reset || data.items.length || removed.size || wasSyncing !== more) render();
+        if (!more && forgetMissing) {
+          forgetMissing = false;
+          forgetMissingArchives();
+        }
+        if (first || data.reset || startOver || data.items.length || removed.size || wasSyncing !== more) render();
         if (!more) showWanted();
         const item = currentItem();
         if ($("#detail-dialog").open && item) {
@@ -292,11 +319,11 @@ document.addEventListener("keydown", (event) => {
 // Archiving a link with its tags; a link already archived is only archived again once confirmed.
 async function addLink(url, again = false, typedTags = []) {
   const result = await api("/api/media", { method: "POST", body: JSON.stringify({ url, again, tags: typedTags }) });
-  schedule();
   // The server says nothing more of an archive that is private while private archives are hidden.
   if (result.private) { toast(t(result.created ? "add.private" : "add.known")); return; }
   const { item, created, restored, occurrences } = result;
-  upsert(item);
+  if (!upsert(item)) return;
+  schedule();
   state.loaded = true;
   setView("all");
   if (created) toast(t(isPrivate(item) ? "add.private" : "add.queued"));
@@ -365,8 +392,7 @@ async function patchTags(item, tags) {
   if (isPrivate(updated) && !state.unlocked) {
     // Made private while private archives are hidden: it leaves the library at once.
     state.items = state.items.filter((other) => other.id !== updated.id);
-    state.selected.delete(updated.id);
-    if ($("#detail-dialog").open && state.currentId === updated.id) $("#detail-dialog").close();
+    forgetMissingArchives();
     render();
     toast(t("private.moved"));
     return null;
@@ -386,10 +412,11 @@ async function saveTags(tags) {
 
 async function retryArchive(id) {
   const item = await api(`/api/media/${id}/retry`, { method: "POST", body: "{}" });
-  upsert(item);
+  if (!upsert(item)) return;
+  if ($("#detail-dialog").open && state.currentId === item.id) renderDetail(item);
+  else toast(t("add.queued"));
   render();
   schedule();
-  toast(t("add.queued"));
 }
 
 $("#detail-content").addEventListener("submit", async (event) => {
@@ -420,8 +447,7 @@ $("#detail-content").addEventListener("click", async (event) => {
   if (retry) {
     retry.disabled = true;
     try {
-      const item = await api(`/api/media/${state.currentId}/retry`, { method: "POST", body: "{}" });
-      upsert(item); renderDetail(item); render(); schedule();
+      await retryArchive(state.currentId);
     } catch (error) { detailFeedback(error.message); retry.disabled = false; }
   }
   if (event.target.closest("#delete-button")) deleteArchives([state.currentId]);
@@ -432,7 +458,6 @@ $("#detail-content").addEventListener("keydown", (event) => {
   if (event.target.id === "note-input" && event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); saveNote(); }
 });
 
-// Deleting archives, always after a confirmation: to the trash, with an undo; from the trash, for good.
 async function mutateSelection(action, ids, extra = {}, progress = null) {
   const total = {};
   // Keep each request below the API body limit, including long archive identifiers; smaller ones when progress is shown.
@@ -455,6 +480,7 @@ async function batch(action, ids) {
   return result;
 }
 
+// Deleting archives, always after a confirmation: to the trash, with an undo; from the trash, for good.
 function deleteArchives(ids) {
   confirmDelete(ids, !ids.some((id) => state.items.find((item) => item.id === id)?.deleted_at));
 }
@@ -621,7 +647,9 @@ $("#tag-menu").addEventListener("keydown", (event) => {
   items[(items.indexOf(document.activeElement) + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
 });
 $("#tag-menu").addEventListener("focusout", (event) => { if (event.relatedTarget && !$("#tag-menu").contains(event.relatedTarget)) closeTagMenu(); });
+// A long press, as on a card: the click that ends it must not select the tag.
 let pressTimer;
+let tagPressed = false;
 $("#tag-nav").addEventListener("contextmenu", (event) => {
   const button = event.target.closest("[data-tag]");
   if (!button) return;
@@ -629,14 +657,22 @@ $("#tag-nav").addEventListener("contextmenu", (event) => {
   openTagMenu(button.dataset.tag, event.clientX, event.clientY);
 });
 $("#tag-nav").addEventListener("pointerdown", (event) => {
+  tagPressed = false;
   const button = event.target.closest("[data-tag]");
   if (!button || event.pointerType === "mouse") return;
   pressTimer = setTimeout(() => {
+    tagPressed = true;
     const rect = button.getBoundingClientRect();
     openTagMenu(button.dataset.tag, rect.left + 20, rect.bottom);
   }, 500);
 });
 ["pointerup", "pointercancel", "pointerleave"].forEach((type) => $("#tag-nav").addEventListener(type, () => clearTimeout(pressTimer)));
+$("#tag-nav").addEventListener("click", (event) => {
+  if (!tagPressed) return;
+  tagPressed = false;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 
 $("#tag-menu").addEventListener("click", (event) => {
   const action = event.target.closest("[data-tag-action]")?.dataset.tagAction;
@@ -690,7 +726,6 @@ $("#tag-dialog-cancel").addEventListener("click", () => $("#tag-dialog").close()
 // empty element moved to where it opens; without these in the browser, it is shown and placed from here.
 const cardMenu = { id: null, ids: [], panel: "actions", x: 0, y: 0, opened: 0, opener: null, busy: false };
 const cardMenuItems = () => cardMenu.ids.map((id) => state.items.find((item) => item.id === id)).filter(Boolean);
-const sourceURL = (item) => item.details?.url || item.source_url;
 const popoverMenu = Object.hasOwn(HTMLElement.prototype, "popover");
 const anchoredMenu = popoverMenu && CSS.supports("position-area: block-end");
 if (popoverMenu) $("#card-menu").hidden = false; // a closed popover is not rendered
@@ -739,7 +774,7 @@ function showCardPanel(panel) {
     menu.innerHTML = `${many ? `<p class="menu-label">${escapeHTML(t("select.count", { count: items.length }))}</p>` : ""}<div role="menu" aria-label="${escapeHTML(label)}">${[
       many ? "" : [
         entry("open", t("cardMenu.open")),
-        entry("source", item.platform === "Web" ? t("detail.viewSource") : t("detail.viewOn", { platform: platformName(item.platform) })),
+        entry("source", sourceLabel(item)),
         entry("copy", t("cardMenu.copy")), separator].join(""),
       many || trash ? "" : entry("rename", t("action.rename")),
       trash ? "" : entry("tags", t(many ? "detail.addTag" : "cardMenu.tags")),
@@ -1031,12 +1066,21 @@ $("#close-capture").addEventListener("click", () => $("#capture-dialog").close()
 
 // The articles' text, read from the server only while searching inside articles is on.
 let articleTextsTask = null;
+let articleTextsAgain = false;
 loadArticleTexts = () => {
-  if (!state.fullText || articleTextsTask) return;
+  if (!state.fullText) return;
+  if (articleTextsTask) { articleTextsAgain = true; return; }
+  articleTextsAgain = false;
+  const key = syncKey();
   articleTextsTask = api("/api/articles/text").then(({ texts }) => {
-    state.articleTexts = new Map(Object.entries(texts).map(([id, text]) => [id, fold(text)]));
+    if (key !== syncKey()) return;
+    const known = new Set(state.items.map((item) => item.id));
+    state.articleTexts = new Map(Object.entries(texts).filter(([id]) => known.has(id)).map(([id, text]) => [id, fold(text)]));
     if (state.query) render();
-  }).catch(() => {}).finally(() => { articleTextsTask = null; });
+  }).catch(() => {}).finally(() => {
+    articleTextsTask = null;
+    if (articleTextsAgain || key !== syncKey()) loadArticleTexts();
+  });
 };
 loadArticleTexts();
 $("#open-shortcuts").addEventListener("click", () => $("#shortcuts-dialog").showModal());
@@ -1094,13 +1138,9 @@ function lockPrivate(reason = "manual") {
   // The library is already synced without them: there is nothing to read again.
   syncedWith = syncKey();
   if (reason === "manual" || reason === "idle") api("/api/private/lock", { method: "POST", body: "{}", headers: { "X-Private-Unlock": token } }).catch(() => {});
-  const hidden = new Set(state.items.filter(isPrivate).map((item) => item.id));
-  state.items = state.items.filter((item) => !hidden.has(item.id));
-  hidden.forEach((id) => { state.selected.delete(id); articleCache.delete(id); });
-  if (hidden.has(state.currentId)) $("#detail-dialog").close();
-  if (!$("#player").hidden && player.items.some(isPrivate)) closePlayer();
+  state.items = state.items.filter((item) => !isPrivate(item));
+  forgetMissingArchives();
   if ($("#export-dialog").open) $("#export-dialog").close();
-  state.tags = existingTags();
   renderPrivateToggle();
   render();
   if (reason !== "silent") toast(t(reason === "manual" ? "private.hidden" : "private.expired"));

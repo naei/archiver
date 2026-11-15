@@ -4,8 +4,7 @@ Reddit turns anonymous visitors away from its pages and its API, but still
 serves each post's Atom feed, about once a minute: the title, the author, the
 text as it was written and the address of the photo or video. The photos of a
 gallery are listed by the page Reddit offers for embedding a post elsewhere.
-A link to a comment keeps that comment, with the post it was written under.
-That pace is too slow for periodic checks, so Reddit's originals are not checked."""
+A link to a comment keeps that comment, with the post it was written under."""
 import html
 import re
 from urllib.parse import urlparse
@@ -14,14 +13,15 @@ from lxml import etree
 from lxml import html as lxml_html
 
 from .. import net, ytdlp
-from . import EXPIRED, LIMITED, NO_MEDIA, UNREADABLE, WRONG_LINK, Gone
+from . import EXPIRED, GONE, LIMITED, NO_MEDIA, ONLINE, UNKNOWN, UNREADABLE, WRONG_LINK, Final, Gone
 from . import DELETED as NO_LONGER, UNAVAILABLE as NOT_SHOWN
 
 NAME = "Reddit"
-ID = r"rdt-[a-z0-9]{1,10}(?:-[a-z0-9]{1,10})?|rdts-[a-zA-Z0-9]{4,24}"
+# A comment's id is longer than a post's: Reddit numbers far more of them.
+ID = r"rdt-[a-z0-9]{1,10}(?:-[a-z0-9]{1,13})?|rdts-[a-zA-Z0-9]{4,24}"
 HOSTS = ("reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com", "np.reddit.com", "m.reddit.com", "redd.it")
 # A post under a community or a profile, or alone; then, for a comment, the post's title and the comment's id.
-POST_PATH = re.compile(r"(?:/(?:r|u|user)/[\w.-]{1,40})?/comments/([a-z0-9]{1,10})(?:/[^/]*(?:/([a-z0-9]{1,10}))?)?/?")
+POST_PATH = re.compile(r"(?:/(?:r|u|user)/[\w.-]{1,40})?/comments/([a-z0-9]{1,10})(?:/[^/]*(?:/([a-z0-9]{1,13}))?)?/?")
 GALLERY_PATH = re.compile(r"/gallery/([a-z0-9]{1,10})/?")
 SHARE_PATH = re.compile(r"/(r|u|user)/([\w.-]{1,40})/s/([a-zA-Z0-9]{4,24})/?")
 ATOM = {"a": "http://www.w3.org/2005/Atom"}
@@ -70,13 +70,17 @@ def address(item):
         path = urlparse(final).path
     found = post_ids(path)
     if not found:
-        raise RuntimeError(EXPIRED.format(platform=NAME))
+        raise Final(EXPIRED.format(platform=NAME))
     return found
+
+
+def feed_url(post_id, comment_id):
+    return f"https://www.reddit.com/comments/{post_id}/{f'_/{comment_id}/' if comment_id else ''}.rss?limit=1"
 
 
 def fetch_feed(post_id, comment_id, stopping):
     """The Atom feed of a post, or of one of its comments: the post's entry, then the comment's."""
-    url = f"https://www.reddit.com/comments/{post_id}/{f'_/{comment_id}/' if comment_id else ''}.rss?limit=1"
+    url = feed_url(post_id, comment_id)
     for attempt in range(3):
         try:
             return net.fetch(url, "application/atom+xml", ("application/atom+xml", "application/xml", "text/xml"), 8 * 1024 * 1024).body
@@ -193,18 +197,22 @@ def post_details(entry, photos):
     }
 
 
-def archive(item, worker):
-    post_id, comment_id = address(item)
-    feed = fetch_feed(post_id, comment_id, worker.stopping)
+def feed_entries(feed, post_id, comment_id):
+    """(post, comment or None) of a link in its post's feed; Gone when the feed no longer has them."""
     entries = read_entries(feed)
     post = next((entry for entry in entries if entry["kind"] == "post" and entry["id"] == post_id), None)
     comment = next((entry for entry in entries if entry["kind"] == "comment" and entry["id"] == comment_id), None)
-    if not post or (comment_id and not comment):
+    if not post or (comment_id and not comment) or (comment and comment["text"] in ("[deleted]", "[removed]")):
         raise Gone(DELETED)
+    return post, comment
+
+
+def archive(item, worker):
+    post_id, comment_id = address(item)
+    feed = fetch_feed(post_id, comment_id, worker.stopping)
+    post, comment = feed_entries(feed, post_id, comment_id)
     details = post_details(post, lambda: gallery(embed(post["url"])))
     if comment:
-        if comment["text"] in ("[deleted]", "[removed]"):
-            raise Gone(DELETED)
         # The comment is the archive; the post it was written under is shown above it.
         under = {**{key: details[key] for key in ("author", "handle", "url", "published_at", "assets")},
                  "text": f"{details['title']}\n\n{details['text']}".strip()}
@@ -212,3 +220,19 @@ def archive(item, worker):
                    "published_at": comment["published_at"], "text": comment["text"], "quote": None, "assets": [], "reply_to": under}
     with ytdlp.Session(worker.stopping) as session:
         worker.archive_posts(item, [details], {"source": "reddit", "feed": feed.decode("utf-8", "replace")}, worker.social_fetcher(session))
+
+
+def online(item, worker):
+    """Whether the post's feed still has the post, and the comment: one visit, without waiting for Reddit's next one."""
+    try:
+        post_id, comment_id = address(item)
+        feed = net.fetch(feed_url(post_id, comment_id), "application/atom+xml", ("application/atom+xml", "application/xml", "text/xml"), 8 * 1024 * 1024)
+        post, _ = feed_entries(feed.body, post_id, comment_id)
+        post_details(post, list)  # a deleted post is still in its feed, emptied
+    except Gone:
+        return GONE
+    except net.HTTPStatus as error:
+        return GONE if error.status == 404 else UNKNOWN
+    except (RuntimeError, ValueError):
+        return UNKNOWN
+    return ONLINE

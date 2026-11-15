@@ -30,7 +30,7 @@ function t(key, params = {}) {
   for (const [name, value] of Object.entries(params)) text = text.split(`{${name}}`).join(String(value));
   const number = params.count;
   const plural = number !== undefined && new Intl.PluralRules(locale()).select(Number(number)) !== "one";
-  if (number !== undefined) text = text.replace(/\(s\)/g, plural ? "s" : "").replace(/\(e\)/g, "");
+  if (number !== undefined) text = text.replace(/\(s\)/g, plural ? "s" : "");
   return text;
 }
 

@@ -6,8 +6,10 @@ extension (video.mp4.age) and sit in a folder whose name does not show the
 archive's id; the rest of the application names archives and files as usual
 and reads them decrypted (see crypto.py)."""
 import hashlib
+import io
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from . import crypto, manifest
@@ -27,6 +29,20 @@ class Hashing:
         return data
 
 
+def atomic_write(path, stream):
+    """Replace a local file without sharing a temporary file with another writer."""
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + '.', suffix='.tmp', delete=False) as target:
+            temp = Path(target.name)
+            while chunk := stream.read(1024 * 1024):
+                target.write(chunk)
+        temp.replace(path)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+
+
 class Storage:
     def __init__(self, root):
         self.root = Path(root)
@@ -41,7 +57,7 @@ class Storage:
         self.encryption = crypto.Key(identity) if identity else None
         if self.mode == "s3":
             if not self.bucket:
-                raise ValueError("S3_BUCKET est requis pour le stockage S3.")
+                raise ValueError("S3_BUCKET is required for the S3 storage.")
             import boto3
             from botocore.config import Config
             self.client = boto3.client(
@@ -96,11 +112,7 @@ class Storage:
             return
         path = self.directory(self.folder(item)) / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp = path.with_name(path.name + ".tmp")
-        with temp.open("wb") as target:
-            while chunk := stream.read(1024 * 1024):
-                target.write(chunk)
-        temp.replace(path)
+        atomic_write(path, stream)
 
     def publish(self, media_id, files):
         """Put an archive's finished files in the storage; returns whether they were encrypted.
@@ -134,6 +146,9 @@ class Storage:
                     if result.get("Errors"):
                         raise RuntimeError("The S3 storage refused to delete some files.")
         shutil.rmtree(self.directory(self.folder(item)), ignore_errors=True)
+        # What an interrupted conversion left in the other form; an encrypted folder is only found with the key.
+        if item.get("encrypted") or self.encryption:
+            self.prune(item)
         shutil.rmtree(self.directory(item["id"]), ignore_errors=True)  # where it was prepared
 
     def size(self, item, filename):
@@ -180,9 +195,7 @@ class Storage:
             self.client.put_object(Bucket=self.bucket, Key=self.key(self.folder(item), filename), Body=data)
             return
         path = self.directory(self.folder(item)) / filename
-        temp = path.with_suffix(path.suffix + ".tmp")
-        temp.write_bytes(data)
-        temp.replace(path)
+        atomic_write(path, io.BytesIO(data))
 
     def put_root(self, filename, data):
         """Write a file at the root of the storage, next to the archives' folders, in the current form only."""
@@ -195,9 +208,7 @@ class Storage:
             return
         path = self.root / "media" / filename
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp = path.with_suffix(path.suffix + ".tmp")
-        temp.write_bytes(data)
-        temp.replace(path)
+        atomic_write(path, io.BytesIO(data))
         path.with_name(stale).unlink(missing_ok=True)
 
     def content(self, item, name):

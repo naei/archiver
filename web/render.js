@@ -1,5 +1,5 @@
 // Rendering of the library, shared by the application (app.js) and the offline viewer (viewer.js).
-// Nothing here talks to the server: the scripts that include this file set `fileURL` and fill `state.items`.
+// The host script supplies the library and file URLs; article loading uses those URLs when needed.
 const $ = (selector) => document.querySelector(selector);
 const icons = {
   library: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -50,6 +50,7 @@ const icons = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.file}</svg>`;
@@ -60,8 +61,6 @@ const activeStates = new Set(["queued", "downloading", "processing", "uploading"
 const platformIcons = { X: "x", Web: "globe", YouTube: "youtube", Instagram: "instagram", TikTok: "tiktok", Facebook: "facebook", Bilibili: "bilibili", Bluesky: "bluesky", Mastodon: "mastodon", Reddit: "reddit" };
 // Single-video platforms archived through yt-dlp, without post data.
 const videoPlatforms = new Set(["YouTube", "Facebook", "Bilibili"]);
-// Mirrors availability.CHECKED on the server: the platforms whose integration has an `online` function.
-const checkedPlatforms = new Set(["YouTube", "X", "TikTok", "Bilibili", "Bluesky", "Mastodon", "Web"]);
 // The reserved tag of private archives (mirrors store.PRIVATE): stored under one name, shown translated.
 const PRIVATE_TAG = "private";
 const isPrivate = (item) => item.tags.includes(PRIVATE_TAG);
@@ -111,7 +110,7 @@ function durationLabel(seconds) {
 
 function dateLabel(date, short = false) {
   if (!date) return t("date.unknown");
-  const value = new Date(date);
+  const value = new Date(/^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T00:00` : date);
   const year = !short || value.getFullYear() !== new Date().getFullYear();
   return value.toLocaleDateString(locale(), { day: "numeric", month: short ? "short" : "long", ...(year ? { year: "numeric" } : {}) });
 }
@@ -159,14 +158,18 @@ const isArticle = (item) => item.platform === "Web" && item.details?.kind !== "f
 const titleOf = (item) => item.custom_title || item.title;
 // What the open archive shows, to redraw it only when that changed.
 const detailSignatureOf = (item) => `${item.id}/${item.status}/${item.error}/${titleOf(item)}`;
-// The archive's own title, under a personal one.
 // The title of the open archive, with the pencil that opens the window to give it a personal one.
 const titleRow = (item) => `<div class="title-row"><h2 id="detail-title">${escapeHTML(titleOf(item))}</h2>${readOnly || item.deleted_at ? "" : `<button class="icon-button title-edit" type="button" data-edit-title aria-label="${escapeHTML(t("detail.editTitle"))}" title="${escapeHTML(t("detail.editTitle"))}">${icon("edit")}</button>`}</div>`;
+// The archive's own title, under a personal one.
 const originalTitle = (item) => `<p class="detail-original-title" id="original-title" ${item.custom_title ? "" : "hidden"}>${t("detail.originalTitle")} <span>${escapeHTML(item.title)}</span></p>`;
 
 function platformName(platform) {
   return platform === "Web" ? t("card.web") : platform;
 }
+
+// The original of an archive: a web page's own address when it states one, and what its link is called.
+const sourceURL = (item) => item.details?.url || item.source_url;
+const sourceLabel = (item) => item.platform === "Web" ? t("detail.viewSource") : t("detail.viewOn", { platform: escapeHTML(item.platform) });
 
 function attachments(item) {
   if (item.attachments?.length) return item.attachments;
@@ -178,9 +181,13 @@ function attachments(item) {
 const hasThumbnail = (item, medium) => Boolean(item.attachments?.length ? medium.thumbnail : item.thumbnail);
 
 function upsert(item) {
+  // A mutation may finish after private archives were locked. Its write succeeded on the server,
+  // but its response must not bring a hidden archive back into the interface.
+  if (!readOnly && isPrivate(item) && !state.unlocked) return false;
   const index = state.items.findIndex((existing) => existing.id === item.id);
   if (index < 0) state.items.unshift(item);
   else state.items[index] = item;
+  return true;
 }
 
 const currentItem = () => state.items.find((item) => item.id === state.currentId);
@@ -229,6 +236,9 @@ function tagCounts(untagged = false) {
   // Without any tag yet, every archive is untagged and the entry would only repeat the library. While it is chosen,
   // the entry stays even at zero, so that it can be clicked again to leave it.
   if (untagged && tags.size && (none || state.tags.includes(UNTAGGED))) tags.set(UNTAGGED, none);
+  // The private tag is there as soon as private archives are shown, even before any archive has it: it is how
+  // an archive is made private.
+  if (!readOnly && state.unlocked && !tags.has(PRIVATE_TAG)) tags.set(PRIVATE_TAG, 0);
   return tags;
 }
 
@@ -320,8 +330,8 @@ function renderSidebar() {
   const shown = [...tags].filter(([tag]) => fold(tagLabel(tag)).includes(query))
     .sort(([a], [b]) => fixed(b) - fixed(a) || a.localeCompare(b, locale()));
   const menu = Boolean($("#tag-menu")); // the viewer cannot change tags
-  reconcile($("#tag-nav"), shown.length ? shown.map(([tag, count]) => `<div class="tag-row" data-key="${escapeHTML(tag)}">
-    <button class="nav-button ${state.tags.includes(tag) ? "active" : ""}" data-tag="${escapeHTML(tag)}" aria-pressed="${state.tags.includes(tag)}"><span class="tag-hash">#</span><span class="tag-name">${escapeHTML(tagLabel(tag))}</span><span class="count">${count}</span></button>
+  reconcile($("#tag-nav"), shown.length ? shown.map(([tag, count]) => `<div class="tag-row${tag === PRIVATE_TAG ? " private-tag" : ""}" data-key="${escapeHTML(tag)}">
+    <button class="nav-button ${state.tags.includes(tag) ? "active" : ""}" data-tag="${escapeHTML(tag)}" aria-pressed="${state.tags.includes(tag)}"><span class="tag-hash">${tag === PRIVATE_TAG ? icon("lock") : "#"}</span><span class="tag-name">${escapeHTML(tagLabel(tag))}</span><span class="count">${count}</span></button>
     ${menu && !fixed(tag) ? `<button class="tag-more" data-tag-menu="${escapeHTML(tag)}" aria-haspopup="menu" aria-expanded="${state.tagMenu === tag}" aria-label="${escapeHTML(t("tagMenu.open", { tag }))}">${icon("more")}</button>` : ""}</div>`
   ).join("") : `<p class="sidebar-hint">${t(tags.size ? "tags.noMatch" : "tags.empty")}</p>`);
   const total = state.items.reduce((sum, item) => sum + item.storage_bytes, 0);
@@ -329,7 +339,7 @@ function renderSidebar() {
   $("#storage-size").textContent = t("storage.kept", { size: sizeLabel(total) });
 }
 
-// The lock next to the tags: closed while private archives are hidden.
+// The lock: closed while private archives are hidden.
 function renderPrivateToggle() {
   const toggle = $("#private-toggle");
   if (!toggle) return;
@@ -365,7 +375,8 @@ function card(item) {
     <button class="card-open" data-open="${item.id}" aria-label="${escapeHTML(t(ready && video ? "card.play" : "card.open", { title: titleOf(item) }))}">
       <div class="thumbnail">
         ${item.deleted_at ? `<span class="state-badge">${t("card.trashLeft", { count: trashDaysLeft(item) })}</span>`
-          : item.availability === "gone" ? `<span class="state-badge">${t("card.gone")}</span>` : item.integrity === "damaged" ? `<span class="state-badge">${t("card.damaged")}</span>` : ""}
+          : item.availability === "gone" ? `<span class="state-badge">${t("card.gone")}</span>` : item.integrity === "damaged" ? `<span class="state-badge">${t("card.damaged")}</span>`
+          : warningsOf(item).length ? `<span class="state-badge incomplete">${t("card.incomplete")}</span>` : ""}
         ${ready ? `${preview}${media.length ? `<span class="play-overlay"><span>${icon(mark)}</span></span>` : ""}${badge ? `<span class="duration">${badge}</span>` : ""}` :
           `<div class="job-status ${item.status === "error" ? "error" : ""}">${icon(item.status === "error" ? "alert" : item.status === "queued" ? "clock" : "download")}<span>${statusName(item.status)}${item.status === "downloading" ? ` · ${Math.round(item.progress)} %` : ""}</span>${item.status === "downloading" ? `<progress class="job-progress" max="100" value="${Number(item.progress)}" aria-label="${t("card.progress")}"></progress>` : ""}</div>`}
       </div>
@@ -460,12 +471,13 @@ function render() {
   $("#empty").hidden = items.length > 0 || state.syncing;
   $("#open-player").hidden = !items.some((item) => item.status === "ready" && attachments(item).length);
   if (!items.length) {
-    const isFirst = state.items.length === 0 && !state.query && !state.tags.length && state.view === "all";
+    const isFirst = !readOnly && state.items.length === 0 && !state.query && !state.tags.length && state.view === "all";
     const filtered = state.query || state.tags.length || filterCount();
     const kind = isFirst ? "first" : filtered ? "search" : ["active", "error", "gone", "trash"].includes(state.view) ? state.view : "default";
     $("#empty-title").textContent = t(`empty.${kind}Title`);
     $("#empty-description").textContent = kind === "default" ? "" : t(`empty.${kind}Text`);
     $("#empty-action").innerHTML = isFirst ? `${icon("plus")}${t("empty.firstAction")}` : t(filtered ? "filter.clear" : "empty.action");
+    $("#empty-action").hidden = readOnly && !filtered && state.view === "all";  // the viewer has nothing to offer there
   }
 }
 
@@ -481,27 +493,27 @@ function showMore() {
 new IntersectionObserver((entries) => { if (entries[0].isIntersecting) showMore(); }, { rootMargin: "1200px" }).observe($("#library-more"));
 addEventListener("resize", showMore);
 
-// Thumbnails of some of the archive's media (a thread post's, a quoted post's) that show them on the stage above.
-function mediaThumbs(item, media, indexes, index) {
-  return `<div class="thread-media">${indexes.map((i) => `<button class="thread-thumb ${i === index ? "selected" : ""}" data-attachment="${i}" aria-label="${escapeHTML(t("detail.showMedia", { index: i + 1, count: media.length }))}" aria-pressed="${i === index}"><img src="${fileURL(item, "thumbnail", i)}" alt="" loading="lazy">${media[i]?.type === "video" ? `<span>${icon("play")}</span>` : ""}</button>`).join("")}</div>`;
+// Thumbnails of some of the archive's media (a thread post's, a quoted post's) that open them large.
+function mediaThumbs(item, media, indexes) {
+  return `<div class="thread-media">${indexes.map((i) => `<button class="thread-thumb" data-attachment="${i}" aria-label="${escapeHTML(t("detail.showMedia", { index: i + 1, count: media.length }))}"><img src="${fileURL(item, "thumbnail", i)}" alt="" loading="lazy">${media[i]?.type === "video" ? `<span>${icon("play")}</span>` : ""}</button>`).join("")}</div>`;
 }
 
 // A post shown with the archived one: the post it quotes, or the post of someone else it answers.
-function besidePost(item, media, index, post, kind, label, link) {
-  return `<blockquote class="post-quote ${kind}">${label ? `<p class="quote-label">${label}</p>` : ""}<p class="quote-author">${escapeHTML(post.author || "")}${post.handle ? ` <span>@${escapeHTML(post.handle)}</span>` : ""}</p>${post.text ? `<p class="thread-text">${linkify(escapeHTML(post.text))}</p>` : ""}${post.media?.length ? mediaThumbs(item, media, post.media, index) : ""}<a class="text-link" href="${escapeHTML(post.url)}" target="_blank" rel="noreferrer">${link}</a></blockquote>`;
+function besidePost(item, media, post, kind, label, link) {
+  return `<blockquote class="post-quote ${kind}">${label ? `<p class="quote-label">${label}</p>` : ""}<p class="quote-author">${escapeHTML(post.author || "")}${post.handle ? ` <span>@${escapeHTML(post.handle)}</span>` : ""}</p>${post.text ? `<p class="thread-text">${linkify(escapeHTML(post.text))}</p>` : ""}${post.media?.length ? mediaThumbs(item, media, post.media) : ""}<a class="text-link" href="${escapeHTML(post.url)}" target="_blank" rel="noreferrer">${link}</a></blockquote>`;
 }
 
-function postsSection(item, media, index) {
+function postsSection(item, media) {
   const posts = item.posts || [];
   const many = posts.length > 1;
   if (!posts.length || (!many && !posts[0].text && !posts[0].quote && !posts[0].reply_to)) return "";
   return `<section class="post-thread"><h3>${many ? t("card.thread", { count: posts.length }) : t("detail.postText")}</h3>
     <ol class="thread">${posts.map((post, n) => `<li class="thread-post">
       ${many ? `<div class="thread-meta"><span class="thread-number">${n + 1}/${posts.length}</span>${post.published_at ? `<time datetime="${escapeHTML(post.published_at)}">${dateLabel(post.published_at)}</time>` : ""}<a class="text-link" href="${escapeHTML(post.url)}" target="_blank" rel="noreferrer">${t("detail.viewOn", { platform: escapeHTML(item.platform) })}</a></div>` : ""}
-      ${post.reply_to ? besidePost(item, media, index, post.reply_to, "post-reply", t("detail.replyTo"), t("detail.replied")) : ""}
+      ${post.reply_to ? besidePost(item, media, post.reply_to, "post-reply", t("detail.replyTo"), t("detail.replied")) : ""}
       ${post.text ? `<p class="thread-text">${linkify(escapeHTML(post.text))}</p>` : ""}
-      ${post.quote ? besidePost(item, media, index, post.quote, "", "", t("detail.quoted")) : ""}
-      ${many && post.media?.length ? mediaThumbs(item, media, post.media, index) : ""}
+      ${post.quote ? besidePost(item, media, post.quote, "", "", t("detail.quoted")) : ""}
+      ${many && post.media?.length ? mediaThumbs(item, media, post.media) : ""}
     </li>`).join("")}</ol></section>`;
 }
 
@@ -509,7 +521,7 @@ function availabilityLabel(item) {
   if (item.availability === "gone") return `<span class="state gone">${t("availability.gone", { since: item.gone_since ? t("availability.since", { date: dateLabel(item.gone_since) }) : "" })}</span>`;
   if (item.availability === "online") return t("availability.online", { date: dateLabel(item.availability_checked_at) });
   if (item.availability === "unknown") return t("availability.unknown", { date: dateLabel(item.availability_checked_at) });
-  return checkedPlatforms.has(item.platform) ? t("availability.pending") : t("availability.never", { platform: escapeHTML(item.platform) });
+  return t("availability.pending");
 }
 
 function integrityLabel(item) {
@@ -568,6 +580,17 @@ function retryNote(item) {
   return item.retries ? t("job.autoRetryDone") : "";
 }
 
+// What a ready archive lacks, as the server noted it while making it (see WARNINGS in downloader.py): it is kept
+// all the same, and shown as incomplete.
+const warningsOf = (item) => item.details?.warnings || [];
+function warningsBlock(item) {
+  const kinds = warningsOf(item);
+  if (!kinds.length) return "";
+  return `<div class="notice detail-warning">${icon("alert")}<div><p class="detail-warning-title">${t("warning.title")}</p>
+      <ul>${kinds.map((kind) => `<li>${escapeHTML(t(`warning.${kind}`, { platform: platformName(item.platform) }))}</li>`).join("")}</ul>
+      ${readOnly ? "" : `<p>${t("warning.hint")}</p>`}</div></div>`;
+}
+
 function jobBlock(item) {
   // The server's messages say what happened and what to do; raw tool output stays folded.
   const readable = item.error && item.error.length <= 400 && !item.error.includes("\n");
@@ -587,9 +610,13 @@ async function loadArticle(item) {
     if (readOnly) {
       articleCache.set(item.id, images(item.article_html || ""));
     } else if (!articleCache.has(item.id)) {
-      const response = await fetch(fileURL(item, "article"));
+      const url = fileURL(item, "article");
+      const response = await fetch(url);
       if (!response.ok) throw new Error(response.statusText);
-      articleCache.set(item.id, images(await response.text()));
+      const html = await response.text();
+      // A lock changes the private media URL; a resync can also remove the archive while it loads.
+      if (url !== fileURL(item, "article") || !state.items.some((entry) => entry.id === item.id)) return;
+      articleCache.set(item.id, images(html));
     }
     // The article is built server-side from a fixed set of tags, with local images only.
     if (target.isConnected) target.innerHTML = articleCache.get(item.id);
@@ -614,6 +641,7 @@ function renderArticle(item) {
         ${details.via === "feed" ? `<p class="article-note">${t("detail.feed", { excerpt: details.excerpt ? t("detail.feedExcerpt") : "" })}</p>` : ""}
         ${ready ? `<div class="article-body" id="article-body"><p class="loading">${t("loading")}</p></div>` : ""}
       </article>
+      ${warningsBlock(item)}
       <dl class="detail-metadata">
         <div><dt>${t("date.published")}</dt><dd>${dateLabel(item.published_at)}</dd></div>
         <div><dt>${t("date.added")}</dt><dd>${dateLabel(item.created_at)}</dd></div>
@@ -688,7 +716,7 @@ function mediaStage(item, media, index, selected) {
     : `<div class="video-wrap ${selected.type === "audio" ? "audio" : ""}">${hasThumbnail(item, selected) ? "" : `<span class="file-mark">${icon("audio")}</span>`}<video controls playsinline preload="metadata" ${hasThumbnail(item, selected) ? `poster="${fileURL(item, "thumbnail", index)}"` : ""} src="${fileURL(item, "playback", index)}">${subtitleTracks(item)}</video></div>`;
   const arrows = media.length > 1 ? `<button class="media-arrow previous" data-step="-1" aria-label="${t("detail.previous")}" ${index === 0 ? "disabled" : ""}>${icon("previous")}</button><button class="media-arrow next" data-step="1" aria-label="${t("detail.next")}" ${index === media.length - 1 ? "disabled" : ""}>${icon("next")}</button>` : "";
   const gallery = media.length > 1 ? `<div class="gallery-nav" role="group" aria-label="${t("detail.mediaOf")}">${media.map((asset, i) => `<button class="gallery-button ${i === index ? "selected" : ""}" data-attachment="${i}" aria-label="${escapeHTML(t("detail.showMedia", { index: i + 1, count: media.length }))}" aria-pressed="${i === index}"><img src="${fileURL(item, "thumbnail", i)}" alt="">${asset.type === "video" ? `<span>${icon("play")}</span>` : ""}</button>`).join("")}<span class="gallery-count">${index + 1} / ${media.length}</span></div>` : "";
-  return `<div class="media-stage">${view}${arrows}</div>${gallery}`;
+  return `<div class="media-stage${media.length > 1 ? " several" : ""}">${view}${arrows}</div>${gallery}`;
 }
 
 function renderDetail(item) {
@@ -708,7 +736,8 @@ function renderDetail(item) {
     ${ready ? (selected ? mediaStage(item, media, index, selected) : "") : jobBlock(item)}
     <div class="detail-body">
       <div class="detail-heading"><div>${titleRow(item)}${originalTitle(item)}<p class="detail-author">${escapeHTML(byline)}</p></div></div>
-      ${postsSection(item, media, index) || descriptionSection(item)}
+      ${postsSection(item, media) || descriptionSection(item)}
+      ${warningsBlock(item)}
       <dl class="detail-metadata">
         <div><dt>${t("date.published")}</dt><dd>${dateLabel(item.published_at)}</dd></div>
         <div><dt>${t("date.added")}</dt><dd>${dateLabel(item.created_at)}</dd></div>
@@ -719,8 +748,7 @@ function renderDetail(item) {
       </dl>
       ${tagsAndNote(item)}
       ${ready ? `${downloads(item, selected ? `<a class="button secondary" href="${fileURL(item, "original", index)}">${icon("download")}${t("detail.original")}${media.length > 1 ? ` (${index + 1}/${media.length})` : ""}</a>` : "")}${selected && selected.original !== selected.playback ? `<p class="playback-note">${t("detail.playbackNote")}</p>` : ""}` : ""}
-      ${bottomLinks(item, item.platform === "Web" ? item.details?.url || item.source_url : item.source_url,
-        item.platform === "Web" ? t("detail.viewSource") : t("detail.viewOn", { platform: escapeHTML(item.platform) }))}
+      ${bottomLinks(item, sourceURL(item), sourceLabel(item))}
     </div>`;
   renderDetailTags(item);
   const video = $("#detail-content video");
@@ -1005,14 +1033,31 @@ function showAttachment(index) {
   return true;
 }
 
+// A medium of a thread, opened from its post: shown large over the archive, which stays where it was being read.
+function openMedium(index) {
+  const item = currentItem();
+  const media = item ? attachments(item) : [];
+  const medium = media[index];
+  if (!medium) return;
+  $("#detail-content .media-stage video")?.pause();
+  $("#media-content").innerHTML = medium.type === "image"
+    ? `<img src="${fileURL(item, "playback", index)}" alt="${escapeHTML(medium.alt_text || t("detail.photoAlt", { index: index + 1 }))}">`
+    : `<video controls playsinline ${hasThumbnail(item, medium) ? `poster="${fileURL(item, "thumbnail", index)}"` : ""} src="${fileURL(item, "playback", index)}">${subtitleTracks(item)}</video>`;
+  $("#media-dialog").setAttribute("aria-label", t("detail.showMedia", { index: index + 1, count: media.length }));
+  $("#media-dialog").showModal();
+  // Called right after a click, so browsers allow playback with sound.
+  $("#media-content video")?.play().catch(() => {});
+}
+
+// A click anywhere but on a video's controls closes it.
+$("#media-dialog").addEventListener("click", (event) => { if (!event.target.closest("video")) $("#media-dialog").close(); });
+$("#media-dialog").addEventListener("close", () => { $("#media-content").innerHTML = ""; });
+
 $("#detail-content").addEventListener("click", (event) => {
   const gallery = event.target.closest("[data-attachment]");
-  if (gallery) {
-    const fromThread = gallery.classList.contains("thread-thumb");
-    if (showAttachment(Number(gallery.dataset.attachment)) && !fromThread) {
-      $(`.gallery-button[data-attachment="${state.currentAttachment}"]`)?.focus({ preventScroll: true });
-    }
-    if (fromThread) $(".media-stage")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (gallery?.classList.contains("thread-thumb")) openMedium(Number(gallery.dataset.attachment));
+  else if (gallery && showAttachment(Number(gallery.dataset.attachment))) {
+    $(`.gallery-button[data-attachment="${state.currentAttachment}"]`)?.focus({ preventScroll: true });
   }
   const arrow = event.target.closest("[data-step]");
   if (arrow && showAttachment(state.currentAttachment + Number(arrow.dataset.step))) focusArrow(arrow.dataset.step);
@@ -1025,8 +1070,8 @@ $("#detail-content").addEventListener("click", (event) => {
 });
 
 // Full-screen player: one archive per screen, swiped or scrolled vertically.
-const player = { items: [], index: 0, attachment: 0, observer: null, rendered: 0, opener: null, timer: null,
-  autoplay: storedValue("autoplay") === "1", info: storedValue("player-info") === "1" };
+const player = { items: [], index: 0, observer: null, rendered: 0, opener: null, timer: null,
+  autoplay: storedValue("autoplay") === "1", info: storedValue("player-info") === "1", fill: storedValue("player-fill") === "1" };
 const PLAYER_BATCH = 20; // slides added at a time, a few slides before the last one is reached
 const PHOTO_SECONDS = 5; // how long autoplay shows a photo
 
@@ -1064,7 +1109,7 @@ function renderPlayerInfo() {
     ${text ? `<p class="player-info-text">${linkify(escapeHTML(text))}</p>` : ""}
     ${item.tags.length ? `<div class="player-info-tags">${item.tags.map((tag) => `<span class="tag-chip">${tagChip(tag)}</span>`).join("")}</div>` : ""}
     ${item.note ? `<p class="player-info-label">${t("detail.note")}</p><p class="player-info-text">${escapeHTML(item.note)}</p>` : ""}
-    <a class="text-link player-info-source" href="${escapeHTML(item.source_url)}" target="_blank" rel="noreferrer">${icon("external")}${t("detail.viewOn", { platform: escapeHTML(platformName(item.platform)) })}</a>`;
+    <a class="text-link player-info-source" href="${escapeHTML(sourceURL(item))}" target="_blank" rel="noreferrer">${icon("external")}${sourceLabel(item)}</a>`;
   panel.scrollTop = 0;
 }
 
@@ -1077,6 +1122,13 @@ function togglePlayerInfo() {
 function renderAutoplay() {
   $("#player-autoplay").setAttribute("aria-pressed", String(player.autoplay));
   $("#player-autoplay").classList.toggle("on", player.autoplay);
+}
+
+// Photos at their own size, or enlarged to the screen as videos are.
+function renderFill() {
+  $("#player").classList.toggle("fill", player.fill);
+  $("#player-fill").setAttribute("aria-pressed", String(player.fill));
+  $("#player-fill").classList.toggle("on", player.fill);
 }
 
 function playerItems() {
@@ -1167,7 +1219,7 @@ function activateSlide(position) {
   armAutoplay();
 }
 
-function openPlayer(startId = null) {
+function openPlayer() {
   player.items = playerItems();
   if (!player.items.length) { toast(t("player.empty")); return; }
   const track = $("#player-track");
@@ -1180,17 +1232,17 @@ function openPlayer(startId = null) {
       if (position !== player.index) activateSlide(position);
     }
   }, { root: track, threshold: 0.6 });
-  const start = Math.max(0, player.items.findIndex((item) => item.id === startId));
   player.rendered = 0;
-  addSlides(start + PLAYER_BATCH);
+  addSlides(PLAYER_BATCH);
   // A modal view: the page behind cannot be reached until it closes, and focus then returns where it was.
   player.opener = document.activeElement;
   [...document.body.children].forEach((element) => { if (element.id !== "player") element.inert = true; });
   renderAutoplay();
+  renderFill();
   $("#player").hidden = false;
   document.body.classList.add("player-open");
-  track.children[start].scrollIntoView({ block: "start" });
-  activateSlide(start);
+  track.children[0].scrollIntoView({ block: "start" });
+  activateSlide(0);
   $("#player-close").focus();
   requestAnimationFrame(tickProgress);
 }
@@ -1238,6 +1290,11 @@ $("#player-autoplay").addEventListener("click", () => {
   renderAutoplay();
   armAutoplay();
 });
+$("#player-fill").addEventListener("click", () => {
+  player.fill = !player.fill;
+  try { localStorage.setItem("player-fill", player.fill ? "1" : "0"); } catch { /* per-visit only */ }
+  renderFill();
+});
 $("#player-up").addEventListener("click", () => playerStep(-1));
 $("#player-down").addEventListener("click", () => playerStep(1));
 $("#player-track").addEventListener("click", (event) => {
@@ -1274,7 +1331,7 @@ document.addEventListener("keydown", (event) => {
     if ($("#card-menu") && cardMenuOpen()) { closeCardMenu(true); return; }
     if (!$("#settings-menu").hidden) { setSettings(false, true); return; }
     // Close the topmost dialog ourselves: native Escape handling is lost when focus leaves it.
-    const dialog = ["#title-dialog", "#delete-dialog", "#tag-dialog", "#private-dialog", "#password-dialog", "#shortcuts-dialog", "#capture-dialog", "#about-dialog", "#export-dialog", "#detail-dialog"].map((selector) => $(selector)).find((element) => element?.open);
+    const dialog = ["#media-dialog", "#title-dialog", "#delete-dialog", "#tag-dialog", "#private-dialog", "#password-dialog", "#shortcuts-dialog", "#capture-dialog", "#about-dialog", "#export-dialog", "#duplicate-dialog", "#detail-dialog"].map((selector) => $(selector)).find((element) => element?.open);
     if (dialog) { event.preventDefault(); dialog.close(); return; }
     if ($(".sidebar").classList.contains("open")) { setMenu(false); return; }
     if (!$("#player").hidden) { closePlayer(); return; }

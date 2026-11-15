@@ -1,7 +1,6 @@
 {
   "Server shutting down.": "Arrêt du serveur.",
   "Missing tools: {tools}. See the README or use Docker.": "Outils manquants : {tools}. Consultez le README ou utilisez Docker.",
-  "Missing tools: {tools}. See the README.": "Outils manquants : {tools}. Consultez le README.",
   "No video was retrieved. Ongoing live streams and upcoming premieres are not supported.": "Aucune vidéo récupérée. Les directs en cours et les premières à venir ne sont pas pris en charge.",
   "The video’s metadata could not be retrieved.": "Les métadonnées de la vidéo n’ont pas pu être récupérées.",
   "A photo or video of the post could not be downloaded: {error}": "Un média du post n’a pas pu être téléchargé : {error}",
@@ -75,7 +74,6 @@
   "Request origin refused.": "Origine de la requête refusée.",
   "The operation failed. Check the server logs.": "L’opération a échoué. Vérifiez les journaux du serveur.",
   "Only a failed archive can be retried.": "Seule une archive en échec peut être relancée.",
-  "Wait for processing to finish before deleting this archive.": "Attendez la fin du traitement avant de supprimer cette archive.",
   "Restore the S3 configuration to delete this archive.": "Rétablissez la configuration S3 pour supprimer cette archive.",
   "The S3 storage refused to delete some files.": "Le stockage S3 a refusé la suppression de certains fichiers.",
   "The S3 configuration is needed to read this archive.": "La configuration S3 est nécessaire pour lire cette archive.",

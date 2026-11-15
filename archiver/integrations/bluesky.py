@@ -6,12 +6,11 @@ is the fallback."""
 import hashlib
 import json
 import re
-from datetime import datetime
 from functools import cache
 from urllib.parse import unquote, urlencode, urlparse
 
 from .. import net
-from . import GONE, LIMITED, NO_MEDIA, ONLINE, UNKNOWN, UNREADABLE, WRONG_LINK, Gone
+from . import GONE, LIMITED, NO_MEDIA, ONLINE, UNKNOWN, UNREADABLE, WRONG_LINK, Gone, post_date
 from . import DELETED as NO_LONGER, UNAVAILABLE as NOT_SHOWN
 
 NAME = "Bluesky"
@@ -36,6 +35,8 @@ def link(parsed):
     if not match:
         raise ValueError(WRONG_LINK.format(platform=NAME))
     actor, key = unquote(match[1]), match[2]
+    if not POST_PATH.fullmatch(f"/profile/{actor}/post/{key}"):
+        raise ValueError(WRONG_LINK.format(platform=NAME))
     # A post's key is the instant it was written, to the microsecond, with a random part: it names the post
     # whether its link gives the account's handle or its permanent identifier. A key of another kind, which
     # two accounts may share, is joined to the account.
@@ -129,13 +130,6 @@ def data_server(did):
     except (RuntimeError, ValueError, KeyError, TypeError, StopIteration):
         return None
     return endpoint.rstrip("/") if isinstance(endpoint, str) and endpoint.startswith("https://") else None
-
-
-def post_date(value):
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
-    except (AttributeError, ValueError):
-        return None
 
 
 def post_text(record):

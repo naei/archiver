@@ -1,6 +1,7 @@
 """Run against a disposable S3-compatible service, never a personal bucket."""
 import http.client
 import io
+import json
 import os
 import tempfile
 import threading
@@ -45,16 +46,17 @@ class S3IntegrationTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                media_id = "jNQXAC9IVRw"
+                media_id = "EXAMPLE0001"
                 server.store.add(f"https://youtu.be/{media_id}", [])
                 directory = server.storage.directory(media_id)
                 directory.mkdir(parents=True)
                 video = directory / "original.mp4"
                 video.write_bytes(b"0123456789abcdef")
+                files = {video.name: manifest.hash_file(video)}
                 encrypted = server.storage.publish(media_id, [video])
                 self.assertEqual(encrypted, bool(key))
                 server.store.update(media_id, status="ready", storage="s3", original=video.name, playback=video.name,
-                                    encrypted=int(encrypted))
+                                    encrypted=int(encrypted), files=files)
                 server.storage.cleanup_work(media_id)
                 self.assertFalse(directory.exists())
                 folder = server.storage.folder(server.store.get(media_id))
@@ -111,10 +113,10 @@ class S3IntegrationTests(unittest.TestCase):
                         with server.storage.open(item, "original.mp4", 4, 8) as stream:
                             self.assertEqual(stream.read(), b"45678")
                 # Deleted to the trash, which keeps the files, then purged for good.
-                for method, action, trashed in (("DELETE", "", True), ("POST", "/purge", False)):
+                for action, trashed in (("delete", True), ("purge", False)):
                     conn = http.client.HTTPConnection(*server.server_address, timeout=5)
-                    conn.request(method, f"/api/media/{media_id}{action}", body="{}" if method == "POST" else None,
-                                 headers={"Content-Type": "application/json", **cookie} if method == "POST" else cookie)
+                    conn.request("POST", "/api/media/batch", body=json.dumps({"action": action, "ids": [media_id]}),
+                                 headers={"Content-Type": "application/json", **cookie})
                     response = conn.getresponse()
                     self.assertEqual(response.status, 200)
                     response.read()

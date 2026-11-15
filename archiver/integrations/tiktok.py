@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from .. import net
-from . import EXPIRED, GONE, NO_MEDIA, ONLINE, UNKNOWN, WRONG_LINK, Gone, code
+from . import EXPIRED, GONE, NO_MEDIA, ONLINE, UNKNOWN, WRONG_LINK, Final, Gone, code
 from . import DELETED as NO_LONGER, UNAVAILABLE as NOT_SHOWN
 
 NAME = "TikTok"
@@ -22,7 +22,7 @@ def resolve(url):
     response.connection_.close()
     match = re.search(r"tiktok\.com/@[\w.-]*/(?:video|photo)/(\d+)", final)
     if not match:
-        raise RuntimeError(EXPIRED.format(platform=NAME))
+        raise Final(EXPIRED.format(platform=NAME))
     return match[1]
 
 
@@ -32,6 +32,8 @@ def page_item(page, post_id):
     try:
         detail = json.loads(match[1])["__DEFAULT_SCOPE__"]["webapp.video-detail"] if match else {}
     except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(detail, dict):
         return None
     status = detail.get("statusCode")
     if status in (10216, 10222):  # private post, private account
@@ -133,7 +135,11 @@ def archive(item, worker):
 def online(item, worker):
     post_id = code(item, "tt-")
     if not post_id.isdigit():
-        return None  # a short link whose post was never read
+        # A short link: the archive's link became the post's own when it was read.
+        match = re.search(r"/(?:video|photo)/(\d+)", item["source_url"])
+        if not match:
+            return None
+        post_id = match[1]
     try:
         response = net.fetch(f"https://www.tiktok.com/@/video/{post_id}", "text/html", ("text/html",), 10 * 1024 * 1024)
         found = page_item(response.body.decode("utf-8", "replace"), post_id)

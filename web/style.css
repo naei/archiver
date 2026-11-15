@@ -379,6 +379,17 @@ nav {
   visibility: hidden;
 }
 
+/* The private tag stands apart from the tags the user made: a lock takes the place of its "#". */
+.private-tag .tag-hash {
+  display: grid;
+  place-items: center;
+}
+
+.private-tag .tag-hash svg {
+  width: 13px;
+  height: 13px;
+}
+
 .tag-nav .tag-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -683,10 +694,6 @@ input::placeholder, textarea::placeholder {
   line-height: 1.5;
 }
 
-.form-hint[hidden] {
-  display: none;
-}
-
 .form-hint svg {
   flex: none;
   width: 14px;
@@ -698,6 +705,29 @@ input::placeholder, textarea::placeholder {
   margin-top: 10px;
   color: var(--red);
   font-size: 12px;
+}
+
+.detail-warning {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-block: 14px 18px;
+}
+
+.detail-warning svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+}
+
+.detail-warning-title {
+  font-weight: 600;
+}
+
+.detail-warning ul {
+  margin: 4px 0;
+  padding-left: 16px;
 }
 
 .notice {
@@ -1171,6 +1201,12 @@ main:focus, #library:focus {
   padding: 2px 5px;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+
+.state-badge.incomplete {
+  color: var(--amber-text);
+  background: var(--amber-soft);
+  outline: 1px solid var(--amber-line);
 }
 
 .state-badge {
@@ -1652,8 +1688,8 @@ dialog::backdrop {
 .icon-button {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius);
   color: var(--muted);
 }
@@ -1773,6 +1809,17 @@ dialog::backdrop {
   position: relative;
 }
 
+/* With several media, photos take the frame of videos: the stage and its arrows stay where they are from one
+   medium to the next. */
+.media-stage.several .image-wrap {
+  aspect-ratio: 16 / 9;
+}
+
+.media-stage.several .image-wrap > img {
+  height: 100%;
+  max-height: none;
+}
+
 .media-arrow {
   position: absolute;
   top: 50%;
@@ -1836,7 +1883,7 @@ dialog::backdrop {
   border-radius: var(--radius);
 }
 
-.gallery-button.selected, .thread-thumb.selected {
+.gallery-button.selected {
   border-color: var(--blue);
 }
 
@@ -2008,6 +2055,36 @@ dialog::backdrop {
 .post-quote .text-link {
   display: inline-block;
   margin-top: 6px;
+}
+
+/* A medium of a thread shown large over its archive: nothing but the medium, on the darkened page. */
+.media-dialog {
+  width: fit-content;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.media-dialog::backdrop {
+  background: #000000d9;
+}
+
+.media-dialog img, .media-dialog video {
+  display: block;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  border-radius: var(--radius-l);
+}
+
+.media-dialog .icon-button {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  color: #fff;
+  background: #00000080;
 }
 
 .thread-media {
@@ -2283,8 +2360,8 @@ dialog::backdrop {
 
 .export-option input {
   accent-color: var(--blue);
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   margin: 0;
 }
 
@@ -3076,8 +3153,9 @@ body.player-open {
   object-fit: contain;
 }
 
-/* A video fills the screen whatever its resolution: enlarged to the nearest edge, never cropped or stretched. */
-.player-media video {
+/* A video fills the screen whatever its resolution: enlarged to the nearest edge, never cropped or stretched.
+   So do photos when asked; otherwise a small one keeps its own size. */
+.player-media video, .player.fill .player-media img {
   width: 100%;
   height: 100%;
 }
@@ -3203,8 +3281,8 @@ body.player-open {
 .player-toggle {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius);
   color: #ffffffcc;
   background: #ffffff22;
@@ -3314,7 +3392,6 @@ body.player-open {
   white-space: nowrap;
 }
 
-/* Responsive */
 /* Login, and account creation on first launch: centered, without the library's sidebar. */
 .auth {
   margin: 0;
@@ -3678,9 +3755,6 @@ body.player-open {
   }
   .detail-links .button {
     flex: 1;
-  }
-  .confirm-dialog {
-    padding: 22px;
   }
 }
 

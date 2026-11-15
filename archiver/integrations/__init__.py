@@ -34,27 +34,45 @@ A module defines:
           what `fetch` needs to download it. `raw` is the platform's own data,
           kept with the archive. `fetch(asset, path, on_progress)` downloads
           one medium to `path` plus an extension and returns the file's path;
-          worker.fetch_image does it for assets with a `source_urls` list.
+          worker.fetch_image does it for a photo or a video whose asset has a
+          `source_url`, or a `source_urls` list to try in turn, and
+          worker.social_fetcher(session) for a video that a yt-dlp session
+          (see ytdlp.py) downloads from the asset's `entry`.
         - worker.download_video(item, VIDEO_OPTIONS) for a single video that
-          yt-dlp reads. VIDEO_OPTIONS, the options the platform needs on
-          yt-dlp's command, is then a name of the module.
+          yt-dlp reads. VIDEO_OPTIONS are the options the platform needs on
+          yt-dlp's command. A third argument, a function, turns the title
+          the platform states into the video's.
+        - worker.finish_video(media_id, original, info_path) for a single
+          video the module downloads itself, into
+          worker.storage.directory(media_id), with its data in
+          original.info.json (see bilibili.py).
+        What could not be read but does not prevent the archive is said
+        with worker.warn(item, kind) and the archive goes on: "thread" when
+        other posts of the thread may be missing, "reply_to" for the post it
+        answers, "quote" for media of the post it quotes, "text" for a long
+        text that is cut short. The interface then shows the archive as
+        incomplete.
         Failures are raised as exceptions with a message: Final when another
         attempt would not change the answer, Gone when the original was
         deleted, Refused when the platform takes the visit for a bot.
+
+    online(item, worker)
+        ONLINE, GONE or UNKNOWN: whether the original can still be seen, or
+        None when this archive cannot be checked. GONE only on a clear answer;
+        any refusal or doubt is UNKNOWN. It is asked once a week for each
+        archive, and at most once an hour for the whole platform. This
+        worker only has `run(command)` and `stopping` (see Runner in
+        maintenance.py).
 
 Messages shown to the user are the ones below, the same for every platform and
 filled with its name: DELETED.format(platform=NAME). They are written in English
 here and translated by the files of archiver/locales, so an integration adds
 no text of its own and a new language is one file to write.
 
-    online(item, worker)        (optional)
-        ONLINE, GONE or UNKNOWN: whether the original can still be seen.
-        GONE only on a clear answer; any refusal or doubt is UNKNOWN. Without this
-        function, the platform's originals are not checked.
-
 Content is read as a logged-out visitor would see it: no account, no cookies
 of the user's browser, nothing private.
 """
+from datetime import datetime
 from importlib import import_module
 
 from .. import net
@@ -96,6 +114,14 @@ class Gone(Final):
 
 class Refused(RuntimeError):
     """The platform turned the visit away, taking it for a bot."""
+
+
+def post_date(value):
+    """A date as platforms write it in ISO 8601, with a Z or an offset; None when it cannot be read."""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
+    except (AttributeError, ValueError):
+        return None
 
 
 def code(item, prefix):

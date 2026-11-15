@@ -132,8 +132,8 @@ class Relay:
             item = archive(link["url"], lambda worker: setattr(self, "worker", worker), link.get("languages"))
             if self.stopping.is_set():
                 return False
-            if item is None or item["status"] != "ready":
-                raise RuntimeError((item or {}).get("error") or "no archive was made")
+            if item["status"] != "ready":
+                raise RuntimeError(item["error"] or "no archive was made")
             self.call("POST", f"/api/relay/links/{media_id}", {"state": "archived"})
         except Failure as error:
             if error.status != 409:  # 409: retried or deleted on the server in the meantime

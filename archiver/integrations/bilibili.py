@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode
 
 from .. import net, ytdlp
-from . import GONE, NO_MEDIA, NO_PART, ONLINE, UNKNOWN, WRONG_LINK, Gone, Refused, code
+from . import GONE, NO_MEDIA, NO_PART, ONLINE, UNKNOWN, WRONG_LINK, Final, Gone, Refused, code
 from . import DELETED as NO_LONGER, UNAVAILABLE as NOT_SHOWN
 
 log = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ ID = r"bili-(?:BV[1-9A-HJ-NP-Za-km-z]{10}|av[0-9]{1,20})(?:-p[0-9]{1,4})?"
 
 
 def parse(media_id):
-    """(BV or av number, part) from an archive's link id, such as bili-BV1JB4y1c73K-p44."""
+    """(BV or av number, part) from an archive's link id, such as bili-BV1xxxxxxxxx-p44."""
     code, _, part = media_id.removeprefix("bili-").partition("-p")
     return code, int(part or 1)
 
@@ -66,7 +66,7 @@ def fetch_video(code, part):
     view = video(code)
     page = next((page for page in view.get("pages") or [] if page.get("page") == part), None)
     if not page:
-        raise RuntimeError(NO_PART.format(part=part))
+        raise Final(NO_PART.format(part=part))
     play = call("player/playurl", bvid=view["bvid"], cid=page["cid"], fnval=4048)
     return view, page, play
 
@@ -121,6 +121,8 @@ def video_details(view, page, play, url):
 
 def link(parsed):
     host = (parsed.hostname or "").lower()
+    if host == "b23.tv" or host.endswith(".b23.tv"):
+        raise ValueError(WRONG_LINK.format(platform=NAME))  # a short link: where it leads is not known
     if host != "bilibili.com" and not host.endswith(".bilibili.com"):
         return None
     # The interface's language may prefix the path: /zh-Hans/video/….

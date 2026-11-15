@@ -11,25 +11,19 @@ function localize() {
 // The server's address and the session token it gave at login; never the password.
 const connection = () => chrome.storage.local.get(["server", "token"]);
 
-class Unreachable extends Error {}
-
-// A JSON request to the server. The browser's own Archiver session is left out: the extension has its own.
+// A JSON request to the server; it throws when the server cannot be reached. The browser's own Archiver session
+// is left out: the extension has its own.
 async function call(server, path, { token, data } = {}) {
-  let response;
-  try {
-    response = await fetch(server + path, {
-      method: data ? "POST" : "GET",
-      credentials: "omit",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Language": chrome.i18n.getUILanguage().startsWith("fr") ? "fr" : "en",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: data ? JSON.stringify(data) : undefined,
-    });
-  } catch {
-    throw new Unreachable();
-  }
+  const response = await fetch(server + path, {
+    method: data ? "POST" : "GET",
+    credentials: "omit",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Language": chrome.i18n.getUILanguage().startsWith("fr") ? "fr" : "en",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: data ? JSON.stringify(data) : undefined,
+  });
   let body = {};
   try {
     body = await response.json();

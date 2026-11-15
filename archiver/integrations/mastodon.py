@@ -7,13 +7,12 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime
 from urllib.parse import urlparse
 
 from lxml import html
 
 from .. import net
-from . import NOT_SERVER, Final, Gone, page
+from . import NOT_SERVER, Final, Gone, page, post_date
 from . import DELETED as NO_LONGER, UNAVAILABLE as NOT_SHOWN
 
 log = logging.getLogger(__name__)
@@ -125,13 +124,6 @@ def plain(content, quoting=False):
     return re.sub(r"\n{3,}", "\n\n", "".join(parts)).strip()
 
 
-def post_date(value):
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
-    except (AttributeError, ValueError):
-        return None
-
-
 def beside(status, host):
     """A post shown with the archived one, the one it answers or quotes."""
     details = post_details(status, host, quote=False)
@@ -140,14 +132,17 @@ def beside(status, host):
             **({"url": status["url"]} if status.get("url") else {})}
 
 
-def answered(status, host):
-    """The post of someone else that `status` answers, or None: it is read apart, and may be gone or hidden."""
+def answered(status, host, missed=None):
+    """The post of someone else that `status` answers, or None: it is read apart, and may be gone or hidden;
+    `missed()` is then called."""
     if not status.get("in_reply_to_id") or status.get("in_reply_to_account_id") == status["account"].get("id"):
         return None
     try:
         parent = api(host, f"v1/statuses/{status['in_reply_to_id']}")
     except (RuntimeError, ValueError) as error:
         log.info("Mastodon %s: answered post unreadable: %s", status["id"], error)
+        if missed:
+            missed()
         return None
     return beside(parent, host) if isinstance(parent.get("account"), dict) and parent.get("id") else None
 
@@ -193,8 +188,9 @@ def archive(item, worker):
             if worker.stopping.is_set():
                 raise
             log.info("Mastodon %s: thread unreadable, keeping the post alone: %s", item["id"], error)
+            worker.warn(item, "thread")
     posts = [post_details(one, host) for one in statuses]
-    if (reply_to := answered(statuses[0], host)) and not worker.stopping.is_set():
+    if (reply_to := answered(statuses[0], host, lambda: worker.warn(item, "reply_to"))) and not worker.stopping.is_set():
         posts[0]["reply_to"] = reply_to
     worker.archive_posts(item, posts, {"source": "mastodon", "server": host, "posts": statuses}, worker.fetch_image)
 

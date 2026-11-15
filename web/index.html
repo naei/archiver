@@ -26,7 +26,7 @@
   <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
   <aside class="sidebar" id="sidebar">
     <a class="brand" href="/" aria-label="Archiver"><img src="/favicon.svg" width="32" height="32" alt="">archiver</a>
-    <nav aria-label="Library">
+    <nav aria-label="Library" data-i18n-aria="nav.all">
       <button class="nav-button active" data-view="all"><span data-icon="library"></span><span data-i18n="nav.all">Library</span><span class="count" id="all-count">0</span></button>
       <div class="tags-heading status-heading"><span data-i18n="statuses.heading">Status</span><button class="status-toggle" id="status-toggle" type="button" hidden></button></div>
       <button class="nav-button" data-view="active" data-status hidden><span data-icon="download"></span><span data-i18n="nav.active">In progress</span><span class="count" id="active-count">0</span></button>
@@ -70,7 +70,7 @@
         <span class="url-icon" data-icon="link"></span>
         <label class="sr-only" for="url" data-i18n="form.label">Link to archive</label>
         <input id="url" name="url" type="text" inputmode="url" aria-describedby="url-hint" autocomplete="off" data-i18n-placeholder="form.placeholder" required maxlength="2048">
-        <span class="add-tags-field"><span data-icon="tag"></span><label class="sr-only" for="add-tags" data-i18n="tags.heading">Tags</label><input id="add-tags" type="text" autocomplete="off" maxlength="40" data-i18n-placeholder="form.tagsPlaceholder" role="combobox" aria-autocomplete="list" aria-expanded="false" data-tag-suggest></span>
+        <span class="add-tags-field"><span data-icon="tag"></span><label class="sr-only" for="add-tags" data-i18n="tags.heading">Tags</label><input id="add-tags" type="text" autocomplete="off" data-i18n-placeholder="form.tagsPlaceholder" role="combobox" aria-autocomplete="list" aria-expanded="false" data-tag-suggest></span>
         <button class="button primary" type="submit" id="archive-button"><span data-icon="plus"></span><span data-i18n="form.submit">Archive</span></button>
       </form>
       <p class="form-hint" id="url-hint" role="status" hidden><span data-icon="info"></span><span data-i18n="form.fileHint">This link seems to lead straight to a file. It will be kept as it is, often without a title, an author or a date: to keep its context, archive the page that shows it instead.</span></p>
@@ -138,6 +138,10 @@
     <div class="detail-top"><button class="icon-button" id="close-detail" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
     <div id="detail-content" tabindex="-1"></div>
   </dialog>
+  <dialog id="media-dialog" class="media-dialog">
+    <button class="icon-button" id="close-media" data-i18n-aria="action.close"><span data-icon="close"></span></button>
+    <div id="media-content"></div>
+  </dialog>
   <dialog id="delete-dialog" class="confirm-dialog" aria-labelledby="delete-title">
     <h2 id="delete-title"></h2>
     <p id="delete-text"></p>
@@ -192,8 +196,8 @@
       <h3 data-i18n="shortcuts.media">Archive view and player</h3>
       <dl class="shortcuts">
         <div><dt><kbd>Space</kbd></dt><dd data-i18n="shortcuts.pause">Pause or play the video</dd></div>
-        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.seek">Move the video by 5 seconds (on a photo: previous or next medium)</dd></div>
-        <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.medium">Previous or next medium of the post</dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.seek">Move the video by 5 seconds (on a photo: previous or next item)</dd></div>
+        <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.medium">Previous or next item of the post</dd></div>
         <div><dt><kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd data-i18n="shortcuts.note">Save the personal note (⌘ + Enter on a Mac)</dd></div>
       </dl>
     </section>
@@ -221,7 +225,7 @@
   <div class="context-menu card-menu" id="card-menu" popover hidden></div>
   <dialog id="export-dialog" class="confirm-dialog export-dialog" aria-labelledby="export-title">
     <h2 id="export-title" data-i18n="export.title">Export the library</h2>
-    <p data-i18n="export.text">A ZIP with the archives' files and a page to browse them without the application. An interrupted download resumes where it stopped.</p>
+    <p data-i18n="export.text">A ZIP with the archives’ files and a page to browse them without the application. An interrupted download resumes where it stopped.</p>
     <div class="export-scope" role="radiogroup">
       <label class="export-option"><input type="radio" name="export-scope" value="all" checked><span data-i18n="export.scopeAll">The whole library</span></label>
       <label class="export-option"><input type="radio" name="export-scope" value="tags"><span data-i18n="export.scopeTags">Some tags only</span></label>
@@ -286,6 +290,7 @@
       <div class="player-controls">
         <button class="player-toggle" id="player-info-toggle" type="button" aria-pressed="false" aria-controls="player-info" data-i18n-aria="player.info" data-i18n-title="player.infoKey"><span data-icon="info"></span></button>
         <button class="player-toggle" id="player-autoplay" type="button" aria-pressed="false" data-i18n-aria="player.autoplay" data-i18n-title="player.autoplay"><span data-icon="autoplay"></span></button>
+        <button class="player-toggle" id="player-fill" type="button" aria-pressed="false" data-i18n-aria="player.fill" data-i18n-title="player.fill"><span data-icon="expand"></span></button>
         <button class="icon-button player-close" id="player-close" type="button" data-i18n-aria="action.close"><span data-icon="close"></span></button>
       </div>
     </div>

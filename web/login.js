@@ -36,6 +36,7 @@ async function start() {
     $("#auth-form").hidden = false;
     $("#username").focus();
   } catch {
+    $("#auth-form").before($("#auth-error"));
     showError(t("auth.unreachable"));
   }
 }

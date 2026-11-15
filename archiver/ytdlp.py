@@ -5,7 +5,7 @@ videos, so the raw data an extractor receives is captured to also get photos,
 captions and authors. Reading and downloading share one session, as some
 platforms only serve videos with the cookies set while reading the post."""
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadCancelled, ExtractorError
+from yt_dlp.utils import DownloadCancelled, ExtractorError, YoutubeDLError
 
 from . import proxy
 
@@ -28,6 +28,13 @@ class Session:
     def __exit__(self, *exc):
         self.ydl.close()
 
+    def readable(self, url):
+        """Whether yt-dlp reads what is at `url`, without downloading it."""
+        try:
+            return bool(self.ydl.extract_info(url, download=False, process=False))
+        except YoutubeDLError:
+            return False
+
     def progress(self, status):
         if self.stopping.is_set():
             raise DownloadCancelled("Server shutting down.")
@@ -37,7 +44,7 @@ class Session:
     def capture(self, extractor_class, method, url):
         """Run `extractor_class` on `url`, keeping the first argument its `method` receives.
 
-        Returns (raw data or None, yt-dlp result or None, yt-dlp error or None)."""
+        Returns (raw data or None, yt-dlp result or None)."""
         captured = {}
 
         def keep(extractor, data, *args, **kwargs):
@@ -47,16 +54,16 @@ class Session:
         extractor = type(extractor_class.__name__, (extractor_class,), {method: keep})()
         extractor.set_downloader(self.ydl)
         try:
-            info, error = extractor.extract(url), None
-        except ExtractorError as failure:
-            info, error = None, failure
+            info = extractor.extract(url)
+        except ExtractorError:
+            info = None
         if info:
             # What YoutubeDL.extract_info adds itself, needed to download the result later.
             for entry in [info, *(info.get("entries") or [])]:
                 entry.setdefault("extractor", extractor.IE_NAME)
                 entry.setdefault("extractor_key", extractor.ie_key())
                 entry.setdefault("webpage_url", url)
-        return captured.get("raw"), info, error
+        return captured.get("raw"), info
 
     def download(self, entry, stem, on_progress):
         """Best video and audio of a result, merged; returns the file path."""

@@ -21,7 +21,7 @@ __ARCHIVER_STYLE__
   <aside class="sidebar" id="sidebar">
     <span class="brand"><img src="__ARCHIVER_ICON__" width="32" height="32" alt="">archiver</span>
     <p class="viewer-date" id="viewer-date"></p>
-    <nav aria-label="Library">
+    <nav aria-label="Library" data-i18n-aria="nav.all">
       <button class="nav-button active" data-view="all"><span data-icon="library"></span><span data-i18n="nav.all">Library</span><span class="count" id="all-count">0</span></button>
       <div class="tags-heading status-heading" hidden><span data-i18n="statuses.heading">Status</span></div>
       <button class="nav-button" data-view="gone" data-status hidden><span data-icon="archive"></span><span data-i18n="nav.gone">Gone</span><span class="count" id="gone-count">0</span></button>
@@ -71,7 +71,7 @@ __ARCHIVER_STYLE__
           <select id="filter-date-field"><option value="created_at" data-i18n="date.added">Added</option><option value="published_at" data-i18n="date.published">Published</option></select></label>
         <label class="filter-field"><span data-i18n="filter.from">From</span><input type="date" id="filter-from"></label>
         <label class="filter-field"><span data-i18n="filter.to">To</span><input type="date" id="filter-to"></label>
-        <label class="filter-check"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText">Search inside articles too</span></label>
+        <label class="filter-check"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText">Search inside articles and subtitles too</span></label>
         <button class="text-link filter-clear" id="filter-clear" type="button" data-i18n="filter.clear">Clear filters</button>
       </div>
       <div id="active-filter" class="active-filter" hidden></div>
@@ -89,12 +89,17 @@ __ARCHIVER_STYLE__
     <div class="detail-top"><button class="icon-button" id="close-detail" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
     <div id="detail-content" tabindex="-1"></div>
   </dialog>
+  <dialog id="media-dialog" class="media-dialog">
+    <button class="icon-button" id="close-media" data-i18n-aria="action.close"><span data-icon="close"></span></button>
+    <div id="media-content"></div>
+  </dialog>
   <div id="player" class="player" role="dialog" aria-modal="true" data-i18n-aria="player.open" hidden>
     <div class="player-top">
       <span class="player-position" id="player-position"></span>
       <div class="player-controls">
         <button class="player-toggle" id="player-info-toggle" type="button" aria-pressed="false" aria-controls="player-info" data-i18n-aria="player.info" data-i18n-title="player.infoKey"><span data-icon="info"></span></button>
         <button class="player-toggle" id="player-autoplay" type="button" aria-pressed="false" data-i18n-aria="player.autoplay" data-i18n-title="player.autoplay"><span data-icon="autoplay"></span></button>
+        <button class="player-toggle" id="player-fill" type="button" aria-pressed="false" data-i18n-aria="player.fill" data-i18n-title="player.fill"><span data-icon="expand"></span></button>
         <button class="icon-button player-close" id="player-close" type="button" data-i18n-aria="action.close"><span data-icon="close"></span></button>
       </div>
     </div>

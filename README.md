@@ -84,7 +84,7 @@ Settings are environment variables, read from `.env` by Compose. All are optiona
 | `ENCRYPTION_KEY` | Encrypts files before they are stored. |
 | `PROXY`, `PROXY_MODE` | Sends downloads through an HTTP proxy, or a pool of them. |
 | `RELAY_TOKEN`, `RELAY_SERVER` | Lets a relay at home archive what the server cannot. |
-| `ARCHIVER_FIXITY_DAYS`, `ARCHIVER_CHECK_DAYS` | Days between integrity checks (30) and online checks (7). `0` disables. |
+| `ARCHIVER_FIXITY_DAYS`, `ARCHIVER_CHECK_DAYS` | Days between integrity checks (30) and online checks (7). `0` disables. Originals are checked at most one an hour per platform. |
 
 The catalog (a SQLite file) always lives on the `/data` volume, with S3 storage too: keep that volume. Changing the storage does not move existing archives.
 
@@ -120,7 +120,7 @@ Archiver is one container with a persistent volume on `/data`. It runs on a VPS 
 
 ## Commands
 
-Run them inside the container: `docker compose exec archiver python run.py <command>`.
+Run them inside the container: `docker compose exec archiver python run.py <command>`. `relay` and `archive` run on the home computer instead.
 
 | Command | What it does |
 | --- | --- |
@@ -146,7 +146,7 @@ python run.py                                   # http://127.0.0.1:8000, data in
 python -m unittest discover -s tests            # tests, without network access
 ```
 
-- **Adding a platform.** A link that no integration takes is archived as a web page. An integration teaches Archiver one site, so that its videos or threads are kept as such: it is one file in [`archiver/integrations`](archiver/integrations), listed in `MODULES`. The contract is described at the top of [`__init__.py`](archiver/integrations/__init__.py), and [`mastodon.py`](archiver/integrations/mastodon.py) is a short example. Give it an icon in [`web/render.js`](web/render.js) and tests that run without network access.
+- **Adding a platform.** A link that no integration takes is archived as a web page. An integration teaches Archiver one site, so that its videos or threads are kept as such: it is one file in [`archiver/integrations`](archiver/integrations), listed in `MODULES`. The contract is described at the top of [`__init__.py`](archiver/integrations/__init__.py), and [`mastodon.py`](archiver/integrations/mastodon.py) is a short example. Give it an icon in [`web/render.js`](web/render.js) and tests that run without network access: one file in [`tests/integrations`](tests/integrations), like [`test_mastodon.py`](tests/integrations/test_mastodon.py).
 - **Adding a language.** Copy `en.json` in [`web/locales`](web/locales) and `fr.json` in [`archiver/locales`](archiver/locales) under the language's code, then translate the values, leaving keys and `{braces}` as they are. The extension has its own texts in [`extension/_locales`](extension/_locales).
 
 Pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).

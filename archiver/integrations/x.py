@@ -9,19 +9,21 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from yt_dlp import YoutubeDL
+
 from .. import net, proxy
-from . import GONE, LIMITED, NO_MEDIA, ONLINE, UNKNOWN, UNREADABLE, WRONG_LINK, code
-from . import UNAVAILABLE as NOT_SHOWN
+from . import GONE, LIMITED, NO_MEDIA, ONLINE, UNKNOWN, UNREADABLE, WRONG_LINK, Gone, code, post_date
+from . import DELETED as NO_LONGER, UNAVAILABLE as NOT_SHOWN
 
 log = logging.getLogger(__name__)
 
-# X serves its public pages only to browser-like clients.
-USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 MAX_THREAD_POSTS = 100
 MAX_PAGE_FETCHES = 20
 NAME = "X"
-# Deleted, protected or shown to signed-in users only: X does not tell which.
+# A post X answers about without showing it: deleted, protected or for signed-in users only, it does not tell which.
 UNAVAILABLE = NOT_SHOWN.format(platform=NAME)
+# A post X no longer knows.
+DELETED = NO_LONGER.format(platform=NAME)
 ID = r"x-[0-9]{1,20}"
 HOSTS = ("x.com", "www.x.com", "mobile.x.com", "m.x.com",
          "twitter.com", "www.twitter.com", "mobile.twitter.com", "m.twitter.com")
@@ -63,11 +65,7 @@ def note_tweet(post_id):
     """Full text of a long post, which the public embed data truncates.
 
     Uses X's guest GraphQL API through yt-dlp, which keeps its endpoint and
-    parameters up to date. Returns None when yt-dlp is not importable."""
-    try:
-        from yt_dlp import YoutubeDL
-    except ImportError:
-        return None
+    parameters up to date."""
     via = proxy.current()
     with YoutubeDL({"quiet": True, "no_warnings": True, "socket_timeout": 30, **({"proxy": via.url} if via else {})}) as ydl:
         extractor = ydl.get_info_extractor("Twitter")
@@ -133,12 +131,13 @@ def media_assets(details):
 
 
 def quoted_assets(details, post_id):
-    """A quoted post's media; when X offers one in an unsupported form, the quote keeps its text alone."""
+    """A quoted post's media, as the quote's "assets"; when X offers one in an unsupported form, the quote keeps
+    its text alone and is marked "partial"."""
     try:
-        return media_assets(details)
+        return {"assets": media_assets(details)}
     except ValueError as error:
         log.warning("X: media of quoted post %s skipped: %s", post_id, error)
-        return []
+        return {"assets": [], "partial": True}
 
 
 def post_url(handle, post_id):
@@ -152,34 +151,31 @@ def syndication_post(post, post_id):
     if not isinstance(post, dict) or str(post.get("id_str")) != post_id:
         raise ValueError(UNAVAILABLE)
     user = post.get("user") or {}
-    date = post.get("created_at")
-    try:
-        date = datetime.fromisoformat(date.replace("Z", "+00:00")).isoformat() if date else None
-    except ValueError:
-        date = None
+    date = post_date(post.get("created_at"))
     quoted = post.get("quoted_tweet")
     quote = None
     if isinstance(quoted, dict) and quoted.get("id_str"):
         quoted_user = quoted.get("user") or {}
         quote = {"author": quoted_user.get("name"), "handle": quoted_user.get("screen_name"),
                  "text": post_text(quoted), "url": post_url(quoted_user.get("screen_name"), quoted["id_str"]),
-                 "assets": quoted_assets(quoted.get("mediaDetails") or [], quoted["id_str"])}
+                 **quoted_assets(quoted.get("mediaDetails") or [], quoted["id_str"])}
     return {
         "id": post_id, "user_id": user.get("id_str"), "handle": user.get("screen_name"),
         "author": user.get("name") or user.get("screen_name"), "published_at": date,
         "url": post_url(user.get("screen_name"), post_id), "text": post_text(post),
-        "reply_to": post.get("in_reply_to_status_id_str"), "reply_to_user": post.get("in_reply_to_user_id_str"),
+        "parent_id": post.get("in_reply_to_status_id_str"), "parent_user": post.get("in_reply_to_user_id_str"),
         "quote": quote, "assets": media_assets(post.get("mediaDetails") or []), "raw": post,
     }
 
 
 def page_detail(page):
     """The TweetDetail response X embeds in the server-rendered page of a post."""
-    started = re.search(r'kind:"GraphQLRequestStream\.Started",requestId:(\d+),key:"(?:[^"\\]|\\.)*",name:"TweetDetail"', page)
+    # X writes the kind of each record as a name or, since November 2026, as a number: 0 started, 1 completed.
+    started = re.search(r'kind:(?:0|"GraphQLRequestStream\.Started"),requestId:(\d+),key:"(?:[^"\\]|\\.)*",name:"TweetDetail"', page)
     if not started:
         raise ValueError(UNREADABLE.format(platform=NAME))
     completed = re.search(
-        r'kind:"GraphQLRequestStream\.Completed",requestId:' + started[1]
+        r'kind:(?:1|"GraphQLRequestStream\.Completed"),requestId:' + started[1]
         + r',key:"(?:[^"\\]|\\.)*",result:\$R\[\d+\]=\{kind:"Result\.Ok",value:("(?:[^"\\]|\\.)*")', page,
     )
     if not completed:
@@ -215,15 +211,15 @@ def page_post(raw):
     if isinstance(quoted, dict) and quoted.get("__typename") == "Tweet":
         quoted_post = page_post({**quoted, "quoted_tweet_results": None, "media_entities2": None})
         quote = {key: quoted_post[key] for key in ("author", "handle", "text", "url")}
-        quote["assets"] = quoted_assets(quoted.get("media_entities2") or [], quoted_post["id"])
+        quote.update(quoted_assets(quoted.get("media_entities2") or [], quoted_post["id"]))
     legacy = raw.get("legacy") or {}
     return {
         "id": str(raw.get("rest_id")), "user_id": user.get("rest_id"), "handle": names.get("screen_name"),
         "author": names.get("name") or names.get("screen_name"),
         "published_at": datetime.fromtimestamp(created / 1000, timezone.utc).isoformat() if isinstance(created, (int, float)) else None,
         "url": post_url(names.get("screen_name"), raw.get("rest_id")), "text": expand_links(text, links),
-        "reply_to": (raw.get("reply_to_results") or {}).get("rest_id") or legacy.get("in_reply_to_status_id_str"),
-        "reply_to_user": (raw.get("reply_to_user_results") or {}).get("rest_id") or legacy.get("in_reply_to_user_id_str"),
+        "parent_id": (raw.get("reply_to_results") or {}).get("rest_id") or legacy.get("in_reply_to_status_id_str"),
+        "parent_user": (raw.get("reply_to_user_results") or {}).get("rest_id") or legacy.get("in_reply_to_user_id_str"),
         "quote": quote, "assets": media_assets(raw.get("media_entities2") or []), "raw": raw,
         "protected": bool((user.get("privacy") or {}).get("protected")),
     }
@@ -263,7 +259,7 @@ def page_posts(detail, post_id):
     return posts
 
 
-def thread(focal, known, fetch, limit=MAX_THREAD_POSTS):
+def thread(focal, known, fetch):
     """The author's self-reply chain around `focal`, oldest first.
 
     `known` maps post ids to posts; `fetch(post_id)` returns more posts from that
@@ -278,22 +274,22 @@ def thread(focal, known, fetch, limit=MAX_THREAD_POSTS):
         return known.get(post_id)
 
     chain = [focal]
-    while len(chain) < limit and chain[0]["reply_to"] and chain[0]["reply_to_user"] == author:
-        parent = known.get(chain[0]["reply_to"]) or load(chain[0]["reply_to"])
+    while len(chain) < MAX_THREAD_POSTS and chain[0]["parent_id"] and chain[0]["parent_user"] == author:
+        parent = known.get(chain[0]["parent_id"]) or load(chain[0]["parent_id"])
         if not parent or parent["user_id"] != author:
             break
         chain.insert(0, parent)
-    while len(chain) < limit:
+    while len(chain) < MAX_THREAD_POSTS:
         last = chain[-1]
         # The earliest self-reply continues the thread; later ones are side replies.
-        children = [p for p in known.values() if p["reply_to"] == last["id"] and p["user_id"] == author]
+        children = [p for p in known.values() if p["parent_id"] == last["id"] and p["user_id"] == author]
         if children:
             chain.append(min(children, key=lambda p: int(p["id"])))
             continue
-        orphans = [p for p in known.values() if p["user_id"] == author and p["reply_to_user"] == author
-                   and int(p["id"]) > int(last["id"]) and p["reply_to"] not in known and p["reply_to"] not in attempted]
+        orphans = [p for p in known.values() if p["user_id"] == author and p["parent_user"] == author
+                   and int(p["id"]) > int(last["id"]) and p["parent_id"] not in known and p["parent_id"] not in attempted]
         if orphans and len(attempted) < MAX_PAGE_FETCHES:
-            load(min(orphans, key=lambda p: int(p["id"]))["reply_to"])
+            load(min(orphans, key=lambda p: int(p["id"]))["parent_id"])
             continue
         if last["id"] in attempted or len(attempted) >= MAX_PAGE_FETCHES:
             break
@@ -306,10 +302,11 @@ class XClient:
         self.worker = worker
         via = proxy.current()
         self.opener = build_opener(XRedirects(), *([ProxyHandler({"http": via.url, "https": via.url})] if via else []))
+        self.missing = set()  # what the archive lacks, for worker.warn
 
     def open(self, url):
         try:
-            return self.opener.open(Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US"}), timeout=30)
+            return self.opener.open(Request(url, headers={"User-Agent": net.USER_AGENT, "Accept-Language": "en-US"}), timeout=30)
         except HTTPError as error:
             code = error.code
             error.close()
@@ -345,12 +342,17 @@ class XClient:
 
     def fetch_thread(self, post_id):
         """The post and, when it belongs to one, its whole thread. Returns (posts, raw data)."""
-        embed = self.fetch_post(post_id)
+        try:
+            embed = self.fetch_post(post_id)
+        except net.HTTPStatus as error:
+            if error.status == 404:
+                raise Gone(DELETED) from None
+            raise
         focal = syndication_post(embed, post_id)
         if focal["handle"] and re.fullmatch(r"[a-zA-Z0-9_]{1,15}", focal["handle"]):
             try:
                 known = self.fetch_page(focal["handle"], post_id)
-                for key in ("reply_to", "reply_to_user"):
+                for key in ("parent_id", "parent_user"):
                     known[post_id][key] = known[post_id][key] or focal[key]
 
                 def more(other_id):
@@ -358,14 +360,27 @@ class XClient:
                         return self.fetch_page(focal["handle"], other_id)
                     except (RuntimeError, ValueError) as error:
                         log.info("X %s: page %s skipped: %s", post_id, other_id, error)
+                        self.missing.add("thread")
                         return {}
 
                 posts = thread(known[post_id], known, more)
-                return posts, {"source": "x.com", "posts": [post["raw"] for post in posts]}
+                raw = {"source": "x.com", "posts": [post["raw"] for post in posts]}
+                # A thread that answers someone else's post is shown with it; that post comes with the page.
+                parent = known.get(posts[0]["parent_id"])
+                if parent and parent["user_id"] != posts[0]["user_id"]:
+                    posts[0] = {**posts[0], "reply_to": {key: parent[key] for key in ("author", "handle", "text", "url", "published_at", "assets")}}
+                    raw["reply_to"] = parent["raw"]
+                elif posts[0]["parent_id"] and not parent:
+                    self.missing.add("reply_to")
+                return posts, raw
             except (RuntimeError, ValueError, KeyError, TypeError) as error:
                 if self.worker.stopping.is_set():
                     raise
                 log.warning("X %s: public page unreadable, falling back to the post alone: %s", post_id, error)
+                # Without its page, nothing tells whether the post has a thread; the post it answers is not given.
+                self.missing.add("thread")
+                if focal["parent_id"] and focal["parent_user"] != focal["user_id"]:
+                    self.missing.add("reply_to")
         # Fallback: the post alone, from the embed endpoint.
         if isinstance(embed.get("note_tweet"), dict):
             try:
@@ -376,6 +391,8 @@ class XClient:
             if note:
                 embed["note_tweet"]["note_tweet_results"] = {"result": note}
                 focal = syndication_post(embed, post_id)
+            else:
+                self.missing.add("text")
         return [focal], {"source": "syndication", "posts": [embed]}
 
     def download(self, url, destination, on_progress):
@@ -414,6 +431,11 @@ def link(parsed):
 def archive(item, worker):
     client = XClient(worker)
     posts, raw = client.fetch_thread(code(item, "x-"))
+    for post in posts:
+        if (post["quote"] or {}).pop("partial", False):
+            client.missing.add("quote")
+    for kind in sorted(client.missing):
+        worker.warn(item, kind)
 
     def fetch(asset, path, progress):
         path = path.with_suffix("." + asset.pop("extension"))
@@ -430,6 +452,8 @@ def online(item, worker):
         return GONE if error.status == 404 else UNKNOWN
     except (RuntimeError, ValueError):
         return UNKNOWN
-    if not isinstance(post, dict) or post.get("__typename") == "TweetTombstone" or not post.get("id_str"):
+    if not isinstance(post, dict):
+        return UNKNOWN
+    if post.get("__typename") == "TweetTombstone":
         return GONE
-    return ONLINE
+    return ONLINE if post.get("id_str") else UNKNOWN

@@ -1,11 +1,13 @@
 """Public Facebook videos and reels, downloaded by yt-dlp.
 
-Facebook refuses anonymous visits too often for periodic checks: they would
-risk blocking actual archiving, so its originals are not checked."""
+Facebook answers a visitor the same way for a deleted video and for one it
+does not show without an account: an original is known to be online when it
+can still be read, and nothing tells when it is gone."""
 import re
 from urllib.parse import parse_qs
 
-from . import WRONG_LINK
+from .. import ytdlp
+from . import ONLINE, UNKNOWN, WRONG_LINK
 
 NAME = "Facebook"
 ID = r"fb-[a-zA-Z0-9_-]{4,40}"
@@ -40,5 +42,15 @@ def link(parsed):
 VIDEO_OPTIONS = ()
 
 
+def title(stated):
+    """A video's title without the engagement counts Facebook puts before it: "9.9K views · 341 reactions | …"."""
+    return re.sub(r"^[^|]*\b(?:views?|reactions?|vues?|réactions?)\b[^|]*\|\s*", "", stated)
+
+
 def archive(item, worker):
-    worker.download_video(item, VIDEO_OPTIONS)
+    worker.download_video(item, VIDEO_OPTIONS, title)
+
+
+def online(item, worker):
+    with ytdlp.Session(worker.stopping) as session:
+        return ONLINE if session.readable(item["source_url"]) else UNKNOWN

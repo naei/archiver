@@ -23,7 +23,8 @@ async function archive() {
     return show(t("unreachable"), { state: "error" });
   }
   const { status, body } = answer;
-  if (status === 401) {
+  // A token the server no longer knows leaves the request without a session: refused as one from another origin (403).
+  if (status === 401 || status === 403) {
     await chrome.storage.local.remove("token");
     return show(t("expired"), { connect: true });
   }
