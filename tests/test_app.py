@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from archiver import availability, crypto, i18n, integrations, manifest, net, proxy, relay
+from archiver import availability, crypto, i18n, integrations, manifest, net, proxy, relay, version
 from archiver.integrations import tiktok
 from archiver.integrations.youtube import youtube_url
 from archiver.downloader import WARNINGS, Downloader, excerpt, subtitle_choices
@@ -1318,6 +1318,17 @@ class ServerTestCase(unittest.TestCase):
         result = response.status, dict(response.getheaders()), response.read()
         conn.close()
         return result
+
+
+class VersionTests(ServerTestCase):
+    def test_the_version_has_major_minor_and_patch_numbers(self):
+        self.assertRegex(version.VERSION, r"^\d+\.\d+\.\d+$")
+
+    def test_the_interface_is_told_the_version_once_signed_in(self):
+        with patch("archiver.server.dependencies", return_value={}):
+            status, _, body = self.request("GET", "/api/system")
+            self.assertEqual((status, json.loads(body)["version"]), (200, version.VERSION))
+            self.assertEqual(self.request("GET", "/api/system", headers={"Cookie": ""})[0], 401)
 
 
 class HTTPTests(ServerTestCase):

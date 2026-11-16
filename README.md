@@ -133,7 +133,7 @@ Run them inside the container: `docker compose exec archiver python run.py <comm
 
 **Backups.** Copy the `/data` volume, or use **Export the library**. With S3, back up the catalog on `/data` too, and your encryption key if you use one.
 
-**Updates.** Sites change often. `git pull`, then `docker compose up -d --build` to refresh Archiver and its dependencies.
+**Updates.** Sites change often. `git pull`, then `docker compose up -d --build` to refresh Archiver and its dependencies. The version in use is shown at the bottom of the sidebar.
 
 ## Development
 

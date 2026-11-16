@@ -3,10 +3,10 @@
 const $ = (selector) => document.querySelector(selector);
 const icons = {
   library: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  drive: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 14h18m-5 3h2m-6 0h.01"/>',
   download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 3h.01"/>',
   tag: '<path d="M3 3h8l10 10-8 8L3 11z"/><circle cx="7.5" cy="7.5" r="1"/>',
-  drive: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 14h18m-5 3h2m-6 0h.01"/>',
   link: '<path d="m10 13 4-4m-6 6-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 3 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 1)"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   youtube: '<rect x="2" y="5" width="20" height="14" rx="4"/><path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none"/>',
@@ -335,8 +335,7 @@ function renderSidebar() {
     ${menu && !fixed(tag) ? `<button class="tag-more" data-tag-menu="${escapeHTML(tag)}" aria-haspopup="menu" aria-expanded="${state.tagMenu === tag}" aria-label="${escapeHTML(t("tagMenu.open", { tag }))}">${icon("more")}</button>` : ""}</div>`
   ).join("") : `<p class="sidebar-hint">${t(tags.size ? "tags.noMatch" : "tags.empty")}</p>`);
   const total = state.items.reduce((sum, item) => sum + item.storage_bytes, 0);
-  $("#storage-title").textContent = t(readOnly ? "storage.exported" : state.system?.storage === "s3" ? "storage.s3" : "storage.local");
-  $("#storage-size").textContent = t("storage.kept", { size: sizeLabel(total) });
+  $("#storage-size").textContent = sizeLabel(total);
 }
 
 // The lock: closed while private archives are hidden.

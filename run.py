@@ -6,7 +6,7 @@ import sys
 import tempfile
 import threading
 
-from archiver import crypto, manifest, proxy, relay
+from archiver import crypto, manifest, proxy, relay, version
 from archiver.auth import Auth
 from archiver.maintenance import Maintenance
 from archiver.server import AppServer
@@ -47,6 +47,7 @@ def run_relay():
         print("A relay needs the S3 storage of the server it works for (STORAGE_BACKEND=s3).", flush=True)
         return 2
     worker = relay.Relay(server, secret)
+    print(f"Archiver relay, version {version.VERSION}", flush=True)
 
     def stop(signum, frame):
         threading.Thread(target=worker.stop, daemon=True).start()
@@ -130,7 +131,7 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    print(f"Archiver → http://{'localhost' if host == '0.0.0.0' else host}:{port}", flush=True)
+    print(f"Archiver → http://{'localhost' if host == '0.0.0.0' else host}:{port} (version {version.VERSION})", flush=True)
     try:
         server.serve_forever()
     finally:

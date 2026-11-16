@@ -30,10 +30,6 @@ __ARCHIVER_STYLE__
     <div class="tag-search" id="tag-search-field" hidden><span data-icon="search"></span><label class="sr-only" for="tag-search" data-i18n="tags.search">Search tags</label><input type="search" id="tag-search" autocomplete="off" data-i18n-placeholder="tags.search"></div>
     <div id="tag-nav" class="tag-nav"></div>
     <div class="sidebar-bottom">
-      <div class="storage">
-        <span class="storage-icon" data-icon="drive"></span>
-        <div><strong id="storage-title">—</strong><span id="storage-size">—</span></div>
-      </div>
       <div class="preferences">
         <button class="sidebar-link settings-toggle" id="settings-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" data-i18n-aria="settings.open" data-i18n-title="settings.open"><span data-icon="settings"></span></button>
         <div class="context-menu settings-menu" id="settings-menu" role="menu" data-i18n-aria="settings.open" hidden>
@@ -41,6 +37,9 @@ __ARCHIVER_STYLE__
         </div>
         <button class="sidebar-link theme-toggle" id="theme-toggle" type="button"><span data-icon="sun"></span></button>
         <button class="sidebar-link private-toggle" id="private-toggle" type="button" aria-pressed="false"></button>
+      </div>
+      <div class="sidebar-status">
+        <p class="sidebar-meta" data-i18n-title="storage.label"><span data-icon="drive"></span><span class="sr-only" data-i18n="storage.label">Storage used</span><span id="storage-size">—</span></p>
       </div>
     </div>
   </aside>

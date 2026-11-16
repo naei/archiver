@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from . import i18n, manifest, net, relay, viewer
+from . import i18n, manifest, net, relay, version, viewer
 from .auth import SESSION_SECONDS, TOKEN_SECONDS, UNLOCK_SECONDS, AccountExists, Auth, TooManyAttempts
 from .downloader import Downloader, dependencies
 from .export import Export
@@ -261,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authenticated():
             return
         if path == "/api/system":
-            return self.json({"dependencies": dependencies(), "storage": self.server.storage.mode})
+            return self.json({"dependencies": dependencies(), "storage": self.server.storage.mode, "version": version.VERSION})
         if path == "/api/media/changes":
             query = parse_qs(url.query)
             private = self.unlocked()

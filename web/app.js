@@ -948,6 +948,7 @@ async function loadSystem() {
       $("#system-warning").hidden = false;
     }
     renderSidebar();
+    $("#app-version").textContent = `v${state.system.version}`;
   } catch { /* The library request displays the connection state. */ }
 }
 
