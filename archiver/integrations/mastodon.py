@@ -129,7 +129,7 @@ def beside(status, host):
     details = post_details(status, host, quote=False)
     # It is linked on its own server, where it stays if this one forgets it.
     return {**{key: details[key] for key in ("author", "handle", "text", "url", "published_at", "assets")},
-            **({"url": status["url"]} if status.get("url") else {})}
+            **({"url": status["url"]} if re.match(r"https?://", status.get("url") or "") else {})}
 
 
 def answered(status, host, missed=None):

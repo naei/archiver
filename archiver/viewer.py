@@ -5,6 +5,7 @@ put in every export. The catalog is embedded in the page because a page opened
 from a disk (file://) cannot read a file next to it; the styles and scripts
 are inlined so the page stays a single file that works for years."""
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -128,9 +129,16 @@ def build(records, exported_at, folder=""):
     for text in (scripts, style):
         if "</script" in text.lower() or "</style" in text.lower():
             raise ValueError("Inline code must not close its own tag")
-    catalog = json.dumps({"exported_at": exported_at, "folder": folder, "items": records}, ensure_ascii=False).replace("</", "<\\/")
+    catalog = json.dumps({"exported_at": exported_at, "folder": folder, "items": records}, ensure_ascii=False)
+    # No "<" at all: "</script" would end the block, and "<!--<script" would make the page's own script part of it.
+    catalog = catalog.replace("<", "\\u003c")
     icon = "data:image/svg+xml;base64," + base64.b64encode((WEB / "favicon.svg").read_bytes()).decode()
-    page = template.replace("__ARCHIVER_THEME__", (WEB / "theme.js").read_text(encoding="utf-8"))
+    theme = (WEB / "theme.js").read_text(encoding="utf-8")
+    # The page runs its own scripts and no other: whatever an archive's text held, it stays text.
+    hashes = " ".join("'sha256-" + base64.b64encode(hashlib.sha256(
+        body.replace("__ARCHIVER_THEME__", theme).replace("__ARCHIVER_SCRIPTS__", scripts).encode("utf-8")).digest()).decode() + "'"
+        for body in re.findall(r"<script>(.*?)</script>", template, re.S))
+    page = template.replace("__ARCHIVER_THEME__", theme).replace("__ARCHIVER_SCRIPT_HASHES__", hashes)
     for marker, value in (("__ARCHIVER_STYLE__", style), ("__ARCHIVER_SCRIPTS__", scripts),
                           ("__ARCHIVER_CATALOG__", catalog), ("__ARCHIVER_ICON__", icon)):
         page = page.replace(marker, value)

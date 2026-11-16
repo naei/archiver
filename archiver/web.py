@@ -7,6 +7,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse
 
 import trafilatura
+from htmldate.extractors import try_date_expr
 from lxml import etree
 
 MAX_IMAGES = 40
@@ -18,6 +19,11 @@ NOISE_CLASSES = ("noprint", "mw-editsection", "navbox", "navbox-styles", "mw-jum
                  "sistersitebox", "side-box", "ambox", "hatnote", "printfooter", "catlinks")
 NOISE = "//*[@role='navigation' or " + " or ".join(
     f"contains(concat(' ', normalize-space(@class), ' '), ' {name} ')" for name in NOISE_CLASSES) + "]"
+# What a paragraph may hold besides its text.
+INLINE_TAGS = {"a", "abbr", "b", "br", "cite", "code", "del", "em", "i", "ins", "mark", "q", "s", "small", "span",
+               "strong", "sub", "sup", "time", "u"}
+# The page of an author on a site, as its address usually reads.
+AUTHOR_LINK = re.compile(r"/(?:authors?|auteurs?|autor(?:es|en)?|autori?)/[^/]+/?$", re.I)
 BACKLINKS = ("^", "↑", "↩", "↩︎", "⏎")
 ATOM = "{http://www.w3.org/2005/Atom}"
 CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
@@ -56,7 +62,69 @@ def clean(page):
             link.drop_tree()
         else:
             del link.attrib["href"]
+    # A whole sentence set small and raised, as some sites write their notes, is text like the rest: kept as a
+    # mark, it would lose the spaces around what it holds.
+    for mark in list(tree.iter("sup", "sub")):
+        if len(" ".join(mark.text_content().split())) > 40:
+            mark.drop_tag()
+    for block in list(tree.iter("div", "section", "article")):
+        if (block.text or "").strip() or any((child.tail or "").strip() for child in block):
+            wrap_text(block)
     return tree
+
+
+def wrap_text(block):
+    """Put the text written straight in `block` into paragraphs, as a browser shows it: each stretch of text and
+    inline elements between two blocks is one, and an empty line (two line breaks) starts another. Left as it
+    is, such text would be cut at each of its links and lose the spaces around them."""
+    parts = [block.text] if block.text else []
+    for child in block:
+        parts.append(child)
+        if child.tail:
+            parts.append(child.tail)
+        child.tail = None
+    block.text = None
+    for child in list(block):
+        block.remove(child)
+    run = []
+
+    def put(parent, part):
+        if not isinstance(part, str):
+            parent.append(part)
+        elif len(parent):
+            parent[-1].tail = (parent[-1].tail or "") + part
+        else:
+            parent.text = (parent.text or "") + part
+
+    def flush():
+        # Inline elements with no text around them, such as a lone link or image wrapper, stay as they were.
+        written = any(isinstance(part, str) and part.strip() for part in run)
+        parent = block.makeelement("p") if written else block
+        if written:
+            block.append(parent)
+        for part in run:
+            put(parent, part)
+        run.clear()
+
+    inline = lambda part: isinstance(part, str) or not isinstance(part.tag, str) or part.tag in INLINE_TAGS
+    is_break = lambda part: not isinstance(part, str) and part.tag == "br"
+    index = 0
+    while index < len(parts):
+        part = parts[index]
+        following = index + 1
+        while following < len(parts) and isinstance(parts[following], str) and not parts[following].strip():
+            following += 1
+        if is_break(part) and following < len(parts) and is_break(parts[following]):
+            flush()
+            index = following + 1
+        elif inline(part):
+            run.append(part)
+            index += 1
+        else:
+            flush()
+            block.append(part)
+            index += 1
+    flush()
 
 
 def extract(page, url, recall=False):
@@ -74,12 +142,26 @@ def extract(page, url, recall=False):
     main = etree.fromstring(xml.encode()).find("main") if xml else None
     if main is None or not "".join(main.itertext()).strip():
         raise NoContent(NO_CONTENT)
+    # An image given twice in a row, as sites do for different screens, is shown once.
+    for graphic in list(main.iter("graphic")):
+        before = graphic.getprevious()
+        if before is not None and before.tag == "graphic" and before.get("src") == graphic.get("src") \
+                and not (before.tail or "").strip():
+            before.tail = graphic.tail
+            graphic.getparent().remove(graphic)
     images = []
     for graphic in main.iter("graphic"):
         source = absolute(graphic.get("src"), url)
         if source and source not in images:
             images.append(source)
     field = lambda name: (getattr(metadata, name, None) or None) if metadata else None
+    author, dated = signature(main, field("author"))
+    # When the article was last changed: what the page declares, else the latest date its signature gives.
+    declared = [value.strip()[:10] for value in tree.xpath(
+        "//meta[@property='article:modified_time' or @property='og:updated_time']/@content")]
+    modified = max([day for day in declared if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day)] or dated, default=None)
+    if modified and field("date") and modified <= field("date"):
+        modified = None
     title = field("title")
     heading = main.find(".//head")
     if title and heading is not None:
@@ -88,11 +170,50 @@ def extract(page, url, recall=False):
         if short and re.fullmatch(re.escape(short) + r"\s*[—–\-|·:]\s*\S.*", title):
             title = short
     return {
-        "title": title, "author": field("author"), "date": field("date"),
+        "title": title, "author": author, "date": field("date"), "modified": modified,
         "site": field("sitename") or urlparse(url).hostname, "summary": field("description"),
         "cover": absolute(field("image"), url), "url": absolute(field("url"), url) or url,
         "main": main, "images": images[:MAX_IMAGES],
     }
+
+
+def video_page(page, url):
+    """What a page that presents itself as a video says of it, or None for any other page: such a page is its
+    video, and the text around the player is the site's, not an article."""
+    tree = trafilatura.load_html(page)
+    if tree is None or not any(kind.strip().lower().startswith("video")
+                               for kind in tree.xpath("//meta[@property='og:type']/@content")):
+        return None
+    metadata = trafilatura.extract_metadata(tree, default_url=url)
+    field = lambda name: (getattr(metadata, name, None) or None) if metadata else None
+    return {"title": field("title"), "author": field("author"), "summary": field("description"),
+            "site": field("sitename") or urlparse(url).hostname, "url": url}
+
+
+def signature(main, author):
+    """Take out of the top of the article the short lines that sign and date it, shown above it already, and
+    return its author (the one the page states, else the one these lines link to) and the dates they give."""
+    dates = []
+    for element in list(main):
+        if element.tag in ("graphic", "head"):
+            continue
+        text = " ".join(plain(element).split())
+        # A sentence, however short, is the article's; a signature is a few words and no full stop.
+        if element.tag != "p" or not text or len(text.split()) > 12 or text[-1] in ".!?…":
+            break
+        link = next((ref for ref in element.iter("ref") if AUTHOR_LINK.search(urlparse(ref.get("target") or "").path)), None)
+        if link is None and not (author and author.casefold() in text.casefold()) and not re.search(r"\b(?:19|20)\d{2}\b", text):
+            break
+        if link is not None and not author:
+            author = " ".join(plain(link).split()) or None
+        try:
+            day = try_date_expr(text, "%Y-%m-%d", True, datetime(1995, 1, 1), datetime.now())
+        except (ValueError, TypeError, OverflowError):
+            day = None
+        if day:
+            dates.append(day)
+        main.remove(element)
+    return author, dates
 
 
 def feed_candidates(url):
@@ -244,4 +365,7 @@ def render(main, base, images, title):
             return f"<{cell}>{children(element, True)}</{cell}>"
         return children(element, block)
 
-    return children(main, True).strip()
+    body = children(main, True).strip()
+    # Images that follow each other, alone in their paragraphs or not, are shown together as a grid.
+    body = re.sub(r"<p>\s*((?:<img [^>]*>\s*)+)</p>", r"\1", body)
+    return re.sub(r"(?:<img [^>]*>\s*){2,}", lambda run: f'<div class="image-grid">{run[0].strip()}</div>', body)

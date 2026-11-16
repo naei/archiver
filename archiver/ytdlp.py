@@ -35,6 +35,16 @@ class Session:
         except YoutubeDLError:
             return False
 
+    def files(self, url):
+        """The addresses of the media files yt-dlp finds in the page at `url`, when no platform of its own is
+        behind them: it knows the players of most sites."""
+        try:
+            info = self.ydl.extract_info(url, download=False) or {}
+        except YoutubeDLError:
+            return []
+        return [entry["url"] for entry in (info.get("entries") or [info])
+                if entry and entry.get("extractor") == "generic" and entry.get("protocol") in ("http", "https") and entry.get("url")]
+
     def progress(self, status):
         if self.stopping.is_set():
             raise DownloadCancelled("Server shutting down.")

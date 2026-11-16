@@ -1,3 +1,5 @@
+import gzip
+import hashlib
 import json
 import logging
 import mimetypes
@@ -34,7 +36,10 @@ TOO_MANY = "Too many attempts. Try again in a few minutes."
 def local_path(value):
     """A path on this site to return to after logging in, never another origin."""
     if isinstance(value, str) and value.startswith("/") and not value.startswith("//") and "\\" not in value:
-        return value
+        # Browsers drop tabs and line breaks from an address, which would make "/<tab>/host" another site,
+        # and a line break would start a new response header.
+        if not any(ord(char) <= 0x20 or ord(char) == 0x7f for char in value):
+            return value
     return "/"
 
 
@@ -127,10 +132,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy",
                          "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
                          f"media-src 'self'; connect-src 'self'; frame-ancestors {ancestors}; "
-                         "base-uri 'none'; form-action 'self'")
+                         "base-uri 'none'; form-action 'self'; object-src 'none'")
+        # No other site opens, embeds or reads these pages and files, and the interface uses none of these devices.
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
         super().end_headers()
 
-    def json(self, data, status=200, cookie=None):
+    def json(self, data, status=200, cookie=None, headers=()):
         lang = i18n.language(self.headers.get("X-Language"), self.headers.get("Accept-Language"))
         body = json.dumps(i18n.localize(data, lang), ensure_ascii=False).encode()
         self.send_response(status)
@@ -139,6 +148,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         if cookie is not None:
             self.send_header("Set-Cookie", cookie)
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -208,10 +219,24 @@ class Handler(BaseHTTPRequestHandler):
     def asset(self, name):
         asset = WEB / name
         body = i18n.interface_script().encode() if name == "i18n.js" else asset.read_bytes()
+        # The browser asks each time, and is told in a few bytes when what it kept is still current.
+        etag = f'W/"{hashlib.sha256(body).hexdigest()[:32]}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
         self.send_response(200)
         content_type = "application/manifest+json" if asset.suffix == ".webmanifest" else mimetypes.guess_type(asset.name)[0]
         self.send_header("Content-Type", content_type or "application/octet-stream")
+        # Text travels compressed; images already are.
+        if asset.suffix != ".png" and "gzip" in self.headers.get("Accept-Encoding", ""):
+            body = gzip.compress(body, 6)
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("ETag", etag)
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         if self.command != "HEAD":
@@ -511,7 +536,8 @@ class Handler(BaseHTTPRequestHandler):
                 auth.close_session(self.bearer(), lock=False)
                 return self.json({"signed_in": False})
             auth.close_session(self.session_token())
-            return self.json({"signed_in": False}, cookie=self.session_cookie(""))
+            # The browser also forgets the pages and files it kept, private archives included.
+            return self.json({"signed_in": False}, cookie=self.session_cookie(""), headers=[("Clear-Site-Data", '"cache"')])
         if path == "/api/auth/setup":
             auth.create(data.get("username"), data.get("password"))
         elif path == "/api/auth/login":

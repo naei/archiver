@@ -16,7 +16,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlparse
 
-from . import integrations, manifest, net, proxy, web
+from . import integrations, manifest, net, proxy, web, ytdlp
 from .integrations import Final
 from .store import now
 
@@ -84,6 +84,8 @@ PLAYABLE_AUDIO = ("mp3", "m4a", "aac", "wav", "flac")
 UNDESCRIBED_TYPES = ("", "application/octet-stream", "binary/octet-stream", "application/binary")
 PAGE_TYPES = ("text/html", "application/xhtml+xml")
 MAX_PAGE_BYTES = 10 * 1024 * 1024
+# The files of a page's video that are compared: its qualities, not a whole catalogue.
+MAX_PAGE_VIDEOS = 8
 # Subtitle tracks kept with a video: its author's, in at most this many languages.
 MAX_SUBTITLES = 12
 MAX_FILE_BYTES = 4 * 1024 * 1024 * 1024
@@ -623,6 +625,10 @@ class Downloader:
                 return self.archive_file(item, url, response, content_type)
             page = net.receive(url, response, content_type, MAX_PAGE_BYTES, stopping=self.stopping)
             base = page.url
+            # A page that is a video is archived as that video, with what the page says of it.
+            described = web.video_page(page.body, base)
+            if described and (video := self.page_video(base)):
+                return self.archive_file(item, *video, described)
             article = web.extract(page.body, base)
         except (net.Blocked, web.NoContent) as error:
             # Sites behind bot protection usually still publish their articles in a feed.
@@ -675,6 +681,7 @@ class Downloader:
         info = directory / "original.info.json"
         info.write_text(json.dumps({
             **{key: article[key] for key in ("title", "author", "date", "site", "summary", "cover", "url", "images")},
+            "modified": article.get("modified"),
             "requested_url": item["source_url"], "final_url": base, "via": via, "feed_url": feed_url,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         files.update((body, description, info))
@@ -684,13 +691,38 @@ class Downloader:
             media_id, files, description=content, attachments=attachments,
             details={"site": article["site"], "summary": article["summary"], "url": article["url"],
                      "words": words, "minutes": max(1, round(words / 230)), "via": via,
+                     **({"modified": article["modified"]} if article.get("modified") else {}),
                      "excerpt": via == "feed" and not article["complete"]},
             thumbnail=cover.get("thumbnail"), original=None, playback=None, width=cover.get("width"),
             height=cover.get("height"), size=sum(file.stat().st_size for file in files),
         )
 
-    def archive_file(self, item, url, response, content_type):
-        """Archive a link that leads straight to an image, a video, a sound or a PDF, as a single medium."""
+    def page_video(self, url):
+        """The video that the page at `url` plays, as (address, open response, content type), or None.
+
+        A video offered in several qualities is a file for each, and nothing says which is which: the largest
+        file is kept."""
+        with ytdlp.Session(self.stopping) as session:
+            files = session.files(url)
+        best, best_size = None, -1
+        for file in files[:MAX_PAGE_VIDEOS]:
+            try:
+                address, response = net.open_url(file, "video/*,*/*;q=0.5", headers={"Referer": url})
+            except (RuntimeError, ValueError):
+                continue
+            content_type, size = net.media_type(response), int(response.getheader("Content-Length") or 0)
+            if content_type in VIDEO_TYPES and size > best_size:
+                if best:
+                    best[1].connection_.close()
+                best, best_size = (address, response, content_type), size
+            else:
+                response.connection_.close()
+        return best
+
+    def archive_file(self, item, url, response, content_type, page=None):
+        """Archive a link that leads straight to an image, a video, a sound or a PDF, as a single medium;
+        `page` is what the page that plays it says of it, when the link was that page's."""
+        page = page or {}
         if content_type in UNDESCRIBED_TYPES:
             extension = PurePosixPath(unquote(urlparse(url).path)).suffix.lower().removeprefix(".")
             content_type = FILE_EXTENSIONS.get(extension, content_type)
@@ -702,7 +734,7 @@ class Downloader:
         kind = ("video" if content_type in VIDEO_TYPES else "audio" if content_type in AUDIO_TYPES
                 else "pdf" if content_type == PDF_TYPE else "image")
         name = file_name(url, response)
-        self.store.update(media_id, title=name, progress=0)
+        self.store.update(media_id, title=excerpt(page.get("title") or "", 200) or name, progress=0)
         temp = directory / "original.part"
         try:
             net.receive(url, response, content_type, MAX_FILE_BYTES, lambda fraction: self.store.update(
@@ -739,14 +771,14 @@ class Downloader:
             self.make_thumbnail(original, thumbnail)
         # What the file says about itself; failing that, its name and the date the server last saw it change.
         embedded = self.embedded_metadata(original, kind)
-        title = excerpt(embedded.get("title") or "", 200) or name
-        author = excerpt(embedded.get("author") or "", 200) or None
+        title = excerpt(page.get("title") or embedded.get("title") or "", 200) or name
+        author = excerpt(page.get("author") or embedded.get("author") or "", 200) or None
         published = file_date(embedded.get("date")) or http_date(response.getheader("Last-Modified"))
         self.store.update(media_id, title=title, author=author, published_at=published)
         info = directory / "original.info.json"
         info.write_text(json.dumps({
             "requested_url": item["source_url"], "final_url": url, "content_type": content_type, "name": name,
-            "last_modified": response.getheader("Last-Modified"), "embedded": embedded,
+            "last_modified": response.getheader("Last-Modified"), "embedded": embedded, **({"page": page} if page else {}),
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         size = original.stat().st_size
         shown = thumbnail and thumbnail.name
@@ -755,7 +787,8 @@ class Downloader:
         site = urlparse(url).hostname or ""
         self.finish(
             media_id, {original, playback, info} | ({thumbnail} if thumbnail else set()), attachments=[attachment],
-            details={"kind": "file", "site": site.removeprefix("www."), "url": url, "content_type": content_type},
+            details={"kind": "file", "site": page.get("site") or site.removeprefix("www."), "url": url, "content_type": content_type},
+            **({"description": page["summary"]} if page.get("summary") else {}),
             original=original.name, playback=playback.name, thumbnail=shown,
             width=width, height=height, duration=duration, size=size,
         )

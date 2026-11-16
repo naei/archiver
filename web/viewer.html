@@ -2,7 +2,9 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src __ARCHIVER_SCRIPT_HASHES__; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
   <meta name="robots" content="noindex">
   <title>Archiver</title>
   <link rel="icon" href="__ARCHIVER_ICON__" type="image/svg+xml">
@@ -51,7 +53,7 @@ __ARCHIVER_STYLE__
 
     <section class="collection">
       <div class="collection-toolbar">
-        <div class="search-field"><span data-icon="search"></span><label class="sr-only" for="search" data-i18n="search.label">Search the library</label><input type="search" id="search" autocomplete="off" data-i18n-placeholder="search.placeholder"></div>
+        <search class="search-field"><span data-icon="search"></span><label class="sr-only" for="search" data-i18n="search.label">Search the library</label><input type="search" id="search" enterkeyhint="search" autocomplete="off" data-i18n-placeholder="search.placeholder"></search>
         <p class="result-count" id="result-count" role="status"></p>
         <div class="collection-controls">
           <button class="toolbar-button" id="toggle-filters" type="button" aria-expanded="false" aria-controls="filter-panel"><span data-icon="filter"></span><span data-i18n="filter.open">Filters</span><span class="filter-count" id="filter-count"></span></button>
@@ -64,13 +66,13 @@ __ARCHIVER_STYLE__
         </div>
       </div>
       <div id="filter-panel" class="filter-panel" hidden>
-        <label class="filter-field"><span data-i18n="filter.platform">Platform</span>
+        <label class="filter-field" for="filter-platform"><span data-i18n="filter.platform">Platform</span>
           <select id="filter-platform"><option value="" data-i18n="filter.allPlatforms">All platforms</option></select></label>
-        <label class="filter-field"><span data-i18n="filter.date">Date</span>
+        <label class="filter-field" for="filter-date-field"><span data-i18n="filter.date">Date</span>
           <select id="filter-date-field"><option value="created_at" data-i18n="date.added">Added</option><option value="published_at" data-i18n="date.published">Published</option></select></label>
-        <label class="filter-field"><span data-i18n="filter.from">From</span><input type="date" id="filter-from"></label>
-        <label class="filter-field"><span data-i18n="filter.to">To</span><input type="date" id="filter-to"></label>
-        <label class="filter-check"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText">Search inside articles and subtitles too</span></label>
+        <label class="filter-field" for="filter-from"><span data-i18n="filter.from">From</span><input type="date" id="filter-from"></label>
+        <label class="filter-field" for="filter-to"><span data-i18n="filter.to">To</span><input type="date" id="filter-to"></label>
+        <label class="filter-check" for="search-text"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText">Search inside articles and subtitles too</span></label>
         <button class="text-link filter-clear" id="filter-clear" type="button" data-i18n="filter.clear">Clear filters</button>
       </div>
       <div id="active-filter" class="active-filter" hidden></div>
@@ -84,12 +86,12 @@ __ARCHIVER_STYLE__
     </section>
   </main>
 
-  <dialog id="detail-dialog" aria-labelledby="detail-title">
-    <div class="detail-top"><button class="icon-button" id="close-detail" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
+  <dialog closedby="any" id="detail-dialog" aria-labelledby="detail-title">
+    <div class="detail-top"><button class="icon-button" id="close-detail" type="button" commandfor="detail-dialog" command="close" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
     <div id="detail-content" tabindex="-1"></div>
   </dialog>
-  <dialog id="media-dialog" class="media-dialog">
-    <button class="icon-button" id="close-media" data-i18n-aria="action.close"><span data-icon="close"></span></button>
+  <dialog closedby="any" id="media-dialog" class="media-dialog">
+    <button class="icon-button" type="button" id="close-media" data-i18n-aria="action.close"><span data-icon="close"></span></button>
     <div id="media-content"></div>
   </dialog>
   <div id="player" class="player" role="dialog" aria-modal="true" data-i18n-aria="player.open" hidden>

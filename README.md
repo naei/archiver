@@ -153,7 +153,11 @@ Pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Responsible use
 
-Archiver is for personal archiving: a copy, for yourself, of public content you have seen. It logs in to no site and uses none of your browser's cookies, and does not handle private, paid or DRM-protected content. Respect copyright and each site's terms, do not redistribute what you archive, and do not run a public instance for others.
+Archiver is intended for personal, self-hosted archiving.
+
+Publicly accessible content is not necessarily free to copy or redistribute. You are responsible for ensuring that the content you archive and your use of Archiver comply with applicable laws, copyright, privacy rights and each site's terms.
+
+Do not use Archiver to collect or distribute illegal content or abuse third-party services through excessive requests. Keep your instance private and respect platforms' access limits.
 
 ## License
 

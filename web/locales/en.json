@@ -255,6 +255,7 @@
   "card.trashLeft": "{count} day(s) left",
   "action.close": "Close",
   "detail.author": "{author} on {platform}",
+  "detail.edited": "Edited on {date}",
   "detail.loadingAuthor": "Retrieving the author…",
   "detail.availability": "Original online",
   "detail.integrity": "File integrity",

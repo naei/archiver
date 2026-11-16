@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#14161c" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#fafbfc" media="(prefers-color-scheme: light)">
   <meta name="robots" content="noindex">
@@ -22,14 +23,14 @@
     <form id="auth-form" class="auth-form" hidden>
       <h1 id="auth-title"></h1>
       <p id="auth-text" class="auth-text" data-i18n="auth.setupText" hidden></p>
-      <label class="field"><span data-i18n="auth.username"></span>
-        <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" required>
+      <label class="field" for="username"><span data-i18n="auth.username"></span>
+        <input id="username" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" required>
       </label>
-      <label class="field"><span data-i18n="auth.password"></span>
+      <label class="field" for="password"><span data-i18n="auth.password"></span>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
         <span class="field-hint" id="password-hint" data-i18n="auth.passwordHint" hidden></span>
       </label>
-      <label class="field" id="confirm-field" hidden><span data-i18n="auth.confirm"></span>
+      <label class="field" id="confirm-field" hidden for="confirm"><span data-i18n="auth.confirm"></span>
         <input id="confirm" type="password" autocomplete="new-password">
       </label>
       <p class="form-error" id="auth-error" role="alert" hidden></p>

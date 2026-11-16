@@ -80,7 +80,6 @@ async function applyTitleDialog() {
 
 // Submitting the form covers Enter, without acting on the Enter that confirms a composed character.
 $("#title-dialog-form").addEventListener("submit", (event) => { event.preventDefault(); applyTitleDialog(); });
-$("#title-dialog-cancel").addEventListener("click", () => $("#title-dialog").close());
 $("#title-dialog-reset").addEventListener("click", () => { $("#title-dialog-input").value = ""; applyTitleDialog(); });
 
 // After the visible library is complete, release references to archives it no longer contains.
@@ -201,6 +200,8 @@ $("#add-tags").addEventListener("keydown", (event) => {
   if (event.defaultPrevented) return; // a suggestion was chosen
   if ((event.key === "," || event.key === "Enter") && input.value.trim()) {
     event.preventDefault();
+    // Enter that confirms a composition (Japanese, Chinese, Korean input) is not a tag yet; 229 covers Safari.
+    if (event.isComposing || event.keyCode === 229) return;
     addTypedTags(input.value);
     input.value = "";
     showSuggestions(input);
@@ -372,7 +373,6 @@ $("#archive-form").addEventListener("submit", async (event) => {
   }
 });
 
-$("#duplicate-cancel").addEventListener("click", () => $("#duplicate-dialog").close());
 $("#duplicate-view").addEventListener("click", () => {
   $("#duplicate-dialog").close();
   openDetail(state.duplicate.id);
@@ -516,7 +516,6 @@ function confirmDelete(ids, trash = false) {
   $("#cancel-delete").focus();
 }
 
-$("#cancel-delete").addEventListener("click", () => $("#delete-dialog").close());
 $("#confirm-delete").addEventListener("click", async () => {
   const ids = state.pendingDelete;
   if (state.pendingTrash) {
@@ -617,6 +616,7 @@ function openTagMenu(tag, x, y) {
   state.tagMenu = tag;
   document.querySelector(`[data-tag-menu="${CSS.escape(tag)}"]`)?.setAttribute("aria-expanded", "true");
   const menu = $("#tag-menu");
+  menu.setAttribute("aria-label", tagTitle(tag));
   menu.hidden = false;
   const { innerWidth, innerHeight } = window;
   menu.style.left = `${Math.min(x, innerWidth - menu.offsetWidth - 8)}px`;
@@ -641,9 +641,10 @@ $("#tag-nav").addEventListener("click", (event) => {
 });
 // Arrows move between the menu's actions; leaving it with the keyboard closes it.
 $("#tag-menu").addEventListener("keydown", (event) => {
-  if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
   event.preventDefault();
   const items = [...$("#tag-menu").querySelectorAll("button")];
+  if (event.key === "Home" || event.key === "End") { items.at(event.key === "Home" ? 0 : -1).focus(); return; }
   items[(items.indexOf(document.activeElement) + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
 });
 $("#tag-menu").addEventListener("focusout", (event) => { if (event.relatedTarget && !$("#tag-menu").contains(event.relatedTarget)) closeTagMenu(); });
@@ -718,7 +719,6 @@ async function applyTagDialog() {
 
 $("#tag-dialog-confirm").addEventListener("click", applyTagDialog);
 $("#tag-dialog-form").addEventListener("submit", (event) => { event.preventDefault(); applyTagDialog(); });
-$("#tag-dialog-cancel").addEventListener("click", () => $("#tag-dialog").close());
 
 // An archive's menu: the "…" button of its card, a right click, a long press, or the keyboard's menu key. Opened on a
 // card of a selection of several, it acts on the whole selection.
@@ -990,7 +990,6 @@ $("#status-toggle").addEventListener("click", () => {
   try { localStorage.setItem("show-empty-statuses", state.showEmptyStatuses ? "1" : "0"); } catch { /* per-visit only */ }
   renderSidebar();
 });
-$("#open-capture-menu").addEventListener("click", () => $("#capture-dialog").showModal());
 
 // Exporting the library, or only the archives with some tags; private archives only when asked for.
 const exportPrivate = () => state.unlocked && $("#export-private").checked;
@@ -1058,12 +1057,10 @@ $("#export-dialog").addEventListener("change", (event) => {
   if (event.target.id === "export-private") renderExportTags();
   renderExport();
 });
-$("#export-cancel").addEventListener("click", () => $("#export-dialog").close());
 $("#export-start").addEventListener("click", (event) => {
   if ($("#export-start").classList.contains("disabled")) { event.preventDefault(); return; }
   $("#export-dialog").close();
 });
-$("#close-capture").addEventListener("click", () => $("#capture-dialog").close());
 
 // The articles' text, read from the server only while searching inside articles is on.
 let articleTextsTask = null;
@@ -1073,10 +1070,19 @@ loadArticleTexts = () => {
   if (articleTextsTask) { articleTextsAgain = true; return; }
   articleTextsAgain = false;
   const key = syncKey();
-  articleTextsTask = api("/api/articles/text").then(({ texts }) => {
+  // After what the page needs first, and in turns: long texts would otherwise freeze it while they are prepared.
+  articleTextsTask = api("/api/articles/text", { priority: "low" }).then(async ({ texts }) => {
     if (key !== syncKey()) return;
     const known = new Set(state.items.map((item) => item.id));
-    state.articleTexts = new Map(Object.entries(texts).filter(([id]) => known.has(id)).map(([id, text]) => [id, fold(text)]));
+    const folded = new Map();
+    let since = Date.now();
+    for (const [id, text] of Object.entries(texts)) {
+      if (!known.has(id)) continue;
+      folded.set(id, fold(text));
+      if (Date.now() - since > 40) { await new Promise((resolve) => setTimeout(resolve)); since = Date.now(); }
+    }
+    if (key !== syncKey()) return;
+    state.articleTexts = folded;
     if (state.query) render();
   }).catch(() => {}).finally(() => {
     articleTextsTask = null;
@@ -1084,8 +1090,6 @@ loadArticleTexts = () => {
   });
 };
 loadArticleTexts();
-$("#open-shortcuts").addEventListener("click", () => $("#shortcuts-dialog").showModal());
-$("#close-shortcuts").addEventListener("click", () => $("#shortcuts-dialog").close());
 
 // Changing the password closes every other session and hides private archives again.
 $("#open-password").addEventListener("click", () => {
@@ -1094,7 +1098,6 @@ $("#open-password").addEventListener("click", () => {
   $("#password-dialog").showModal();
   $("#password-current").focus();
 });
-$("#password-cancel").addEventListener("click", () => $("#password-dialog").close());
 $("#password-dialog").addEventListener("close", () => $("#password-form").reset());
 $("#password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1112,8 +1115,6 @@ $("#password-form").addEventListener("submit", async (event) => {
     $("#password-submit").disabled = false;
   }
 });
-$("#open-about").addEventListener("click", () => $("#about-dialog").showModal());
-$("#close-about").addEventListener("click", () => $("#about-dialog").close());
 // Private archives: shown for the account's password typed again, hidden again by the lock or a reload.
 archiveURL = (item, path) => `/api/media/${item.id}/${path}${unlockToken && isPrivate(item) ? `?unlock=${encodeURIComponent(unlockToken)}` : ""}`;
 
@@ -1173,7 +1174,6 @@ $("#private-toggle").addEventListener("click", () => {
   $("#private-dialog").showModal();
   $("#private-password").focus();
 });
-$("#private-cancel").addEventListener("click", () => $("#private-dialog").close());
 $("#private-dialog").addEventListener("close", () => { $("#private-password").value = ""; });
 $("#private-form").addEventListener("submit", async (event) => {
   event.preventDefault();

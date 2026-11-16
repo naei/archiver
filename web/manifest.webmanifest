@@ -3,6 +3,7 @@
   "short_name": "Archiver",
   "description": "A personal memory of the web: keep what mattered to you online, before it disappears.",
   "lang": "en",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

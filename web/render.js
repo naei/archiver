@@ -108,11 +108,14 @@ function durationLabel(seconds) {
   return n >= 3600 ? `${Math.floor(n / 3600)}:${pad(Math.floor(n / 60) % 60)}:${pad(n % 60)}` : `${Math.floor(n / 60)}:${pad(n % 60)}`;
 }
 
+// Formatters are slow to build and every card needs two: one is kept per language and shape.
+const dateFormats = {};
 function dateLabel(date, short = false) {
   if (!date) return t("date.unknown");
   const value = new Date(/^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T00:00` : date);
   const year = !short || value.getFullYear() !== new Date().getFullYear();
-  return value.toLocaleDateString(locale(), { day: "numeric", month: short ? "short" : "long", ...(year ? { year: "numeric" } : {}) });
+  const format = dateFormats[`${locale()}/${short}/${year}`] ||= new Intl.DateTimeFormat(locale(), { day: "numeric", month: short ? "short" : "long", ...(year ? { year: "numeric" } : {}) });
+  return format.format(value);
 }
 
 // The day of a date in the viewer's time zone (YYYY-MM-DD), as date inputs give it.
@@ -138,7 +141,9 @@ function toast(message, action = null) {
   if (action) box.querySelector("button").addEventListener("click", () => { box.hidden = true; action.run(); });
   box.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { box.hidden = true; }, action ? 8000 : 4500);
+  // It stays while the keyboard is on its action.
+  const hide = () => { if (box.contains(document.activeElement)) toastTimer = setTimeout(hide, 2000); else box.hidden = true; };
+  toastTimer = setTimeout(hide, action ? 8000 : 4500);
 }
 
 // An archive's address in the API; the application adds the unlock token of private archives to it.
@@ -195,6 +200,17 @@ const currentItem = () => state.items.find((item) => item.id === state.currentId
 const kept = () => state.items.filter((item) => !item.deleted_at);
 const filterCount = () => [state.platform, state.from || state.to, state.fullText].filter(Boolean).length;
 
+// The text a search looks into, folded once per archive: an archive that changes is a new object.
+let searchTexts = new WeakMap();
+function searchText(item) {
+  let text = searchTexts.get(item);
+  if (text === undefined) {
+    text = fold(`${titleOf(item)} ${item.author || ""} ${item.description || ""} ${item.note || ""} ${item.tags.map(tagLabel).join(" ")}`);
+    searchTexts.set(item, text);
+  }
+  return text;
+}
+
 function visibleItems() {
   const query = fold(state.query);
   return state.items.filter((item) => {
@@ -209,7 +225,7 @@ function visibleItems() {
     if (state.view === "gone" && item.availability !== "gone") return false;
     // Tags add up: an archive shows when it has any of the chosen tags.
     if (state.tags.length && !(item.tags.length ? item.tags.some((tag) => state.tags.includes(tag)) : state.tags.includes(UNTAGGED))) return false;
-    if (fold(`${titleOf(item)} ${item.author || ""} ${item.description || ""} ${item.note || ""} ${item.tags.map(tagLabel).join(" ")}`).includes(query)) return true;
+    if (!query || searchText(item).includes(query)) return true;
     return Boolean(query) && state.fullText && (state.articleTexts.get(item.id) || "").includes(query);
   }).sort((a, b) => {
     if (state.sort === "title") return titleOf(a).localeCompare(titleOf(b), locale());
@@ -371,16 +387,16 @@ function card(item) {
   const textOnly = ready && !web && !media.length;
   return `<article data-key="${item.id}" class="media-card ${selected ? "selected" : ""} ${textOnly ? "text-only" : ""}">
     ${readOnly ? "" : `<div class="card-actions"><button class="card-more" type="button" data-card-menu="${item.id}" aria-haspopup="menu" aria-label="${escapeHTML(t("cardMenu.actions", { title: titleOf(item) }))}">${icon("more")}</button><label class="select-box"><input type="checkbox" data-select="${item.id}" ${selected ? "checked" : ""} ${state.selecting ? "" : 'tabindex="-1"'} aria-label="${escapeHTML(t("card.select", { title: titleOf(item) }))}"></label></div>`}
-    <button class="card-open" data-open="${item.id}" aria-label="${escapeHTML(t(ready && video ? "card.play" : "card.open", { title: titleOf(item) }))}">
+    <button class="card-open" data-open="${item.id}" aria-describedby="card-state-${item.id} card-meta-${item.id}" aria-label="${escapeHTML(t(ready && video ? "card.play" : "card.open", { title: titleOf(item) }))}">
       <div class="thumbnail">
-        ${item.deleted_at ? `<span class="state-badge">${t("card.trashLeft", { count: trashDaysLeft(item) })}</span>`
-          : item.availability === "gone" ? `<span class="state-badge">${t("card.gone")}</span>` : item.integrity === "damaged" ? `<span class="state-badge">${t("card.damaged")}</span>`
-          : warningsOf(item).length ? `<span class="state-badge incomplete">${t("card.incomplete")}</span>` : ""}
+        ${item.deleted_at ? `<span id="card-state-${item.id}" class="state-badge">${t("card.trashLeft", { count: trashDaysLeft(item) })}</span>`
+          : item.availability === "gone" ? `<span id="card-state-${item.id}" class="state-badge">${t("card.gone")}</span>` : item.integrity === "damaged" ? `<span id="card-state-${item.id}" class="state-badge">${t("card.damaged")}</span>`
+          : warningsOf(item).length ? `<span id="card-state-${item.id}" class="state-badge incomplete">${t("card.incomplete")}</span>` : ""}
         ${ready ? `${preview}${media.length ? `<span class="play-overlay"><span>${icon(mark)}</span></span>` : ""}${badge ? `<span class="duration">${badge}</span>` : ""}` :
-          `<div class="job-status ${item.status === "error" ? "error" : ""}">${icon(item.status === "error" ? "alert" : item.status === "queued" ? "clock" : "download")}<span>${statusName(item.status)}${item.status === "downloading" ? ` · ${Math.round(item.progress)} %` : ""}</span>${item.status === "downloading" ? `<progress class="job-progress" max="100" value="${Number(item.progress)}" aria-label="${t("card.progress")}"></progress>` : ""}</div>`}
+          `<div id="card-state-${item.id}" class="job-status ${item.status === "error" ? "error" : ""}">${icon(item.status === "error" ? "alert" : item.status === "queued" ? "clock" : "download")}<span>${statusName(item.status)}${item.status === "downloading" ? ` · ${Math.round(item.progress)} %` : ""}</span>${item.status === "downloading" ? `<progress class="job-progress" max="100" value="${Number(item.progress)}" aria-label="${t("card.progress")}"></progress>` : ""}</div>`}
       </div>
       <h3 class="card-title">${escapeHTML(titleOf(item))}</h3>
-      <div class="card-meta"><span class="platform-icon platform-${item.platform.toLowerCase()}" title="${escapeHTML(platformName(item.platform))}">${icon(platformIcons[item.platform])}</span><span class="author">${escapeHTML(item.platform === "Web" ? siteName(item) : item.author || item.platform)}</span>${cardDate(item)}</div>
+      <div class="card-meta" id="card-meta-${item.id}"><span class="platform-icon platform-${item.platform.toLowerCase()}" title="${escapeHTML(platformName(item.platform))}">${icon(platformIcons[item.platform])}<span class="sr-only">${escapeHTML(platformName(item.platform))}</span></span><span class="author">${escapeHTML(item.platform === "Web" ? siteName(item) : item.author || item.platform)}</span>${cardDate(item)}</div>
     </button>
     <div class="card-tags">${item.tags.map((tag) => `<button class="tag-chip" data-tag="${escapeHTML(tag)}">${tagChip(tag)}</button>`).join("")}</div>
   </article>`;
@@ -497,9 +513,12 @@ function mediaThumbs(item, media, indexes) {
   return `<div class="thread-media">${indexes.map((i) => `<button class="thread-thumb" data-attachment="${i}" aria-label="${escapeHTML(t("detail.showMedia", { index: i + 1, count: media.length }))}"><img src="${fileURL(item, "thumbnail", i)}" alt="" loading="lazy">${media[i]?.type === "video" ? `<span>${icon("play")}</span>` : ""}</button>`).join("")}</div>`;
 }
 
+// An address read from another server is followed only when it is a web page's.
+const webURL = (url) => (/^https?:\/\//i.test(url || "") ? url : "#");
+
 // A post shown with the archived one: the post it quotes, or the post of someone else it answers.
 function besidePost(item, media, post, kind, label, link) {
-  return `<blockquote class="post-quote ${kind}">${label ? `<p class="quote-label">${label}</p>` : ""}<p class="quote-author">${escapeHTML(post.author || "")}${post.handle ? ` <span>@${escapeHTML(post.handle)}</span>` : ""}</p>${post.text ? `<p class="thread-text">${linkify(escapeHTML(post.text))}</p>` : ""}${post.media?.length ? mediaThumbs(item, media, post.media) : ""}<a class="text-link" href="${escapeHTML(post.url)}" target="_blank" rel="noreferrer">${link}</a></blockquote>`;
+  return `<blockquote class="post-quote ${kind}">${label ? `<p class="quote-label">${label}</p>` : ""}<p class="quote-author">${escapeHTML(post.author || "")}${post.handle ? ` <span>@${escapeHTML(post.handle)}</span>` : ""}</p>${post.text ? `<p class="thread-text">${linkify(escapeHTML(post.text))}</p>` : ""}${post.media?.length ? mediaThumbs(item, media, post.media) : ""}<a class="text-link" href="${escapeHTML(webURL(post.url))}" target="_blank" rel="noreferrer">${link}</a></blockquote>`;
 }
 
 function postsSection(item, media) {
@@ -508,7 +527,7 @@ function postsSection(item, media) {
   if (!posts.length || (!many && !posts[0].text && !posts[0].quote && !posts[0].reply_to)) return "";
   return `<section class="post-thread"><h3>${many ? t("card.thread", { count: posts.length }) : t("detail.postText")}</h3>
     <ol class="thread">${posts.map((post, n) => `<li class="thread-post">
-      ${many ? `<div class="thread-meta"><span class="thread-number">${n + 1}/${posts.length}</span>${post.published_at ? `<time datetime="${escapeHTML(post.published_at)}">${dateLabel(post.published_at)}</time>` : ""}<a class="text-link" href="${escapeHTML(post.url)}" target="_blank" rel="noreferrer">${t("detail.viewOn", { platform: escapeHTML(item.platform) })}</a></div>` : ""}
+      ${many ? `<div class="thread-meta"><span class="thread-number">${n + 1}/${posts.length}</span>${post.published_at ? `<time datetime="${escapeHTML(post.published_at)}">${dateLabel(post.published_at)}</time>` : ""}<a class="text-link" href="${escapeHTML(webURL(post.url))}" target="_blank" rel="noreferrer">${t("detail.viewOn", { platform: escapeHTML(item.platform) })}</a></div>` : ""}
       ${post.reply_to ? besidePost(item, media, post.reply_to, "post-reply", t("detail.replyTo"), t("detail.replied")) : ""}
       ${post.text ? `<p class="thread-text">${linkify(escapeHTML(post.text))}</p>` : ""}
       ${post.quote ? besidePost(item, media, post.quote, "", "", t("detail.quoted")) : ""}
@@ -603,9 +622,9 @@ async function loadArticle(item) {
   const target = $("#article-body");
   try {
     // The article's images point at the API: in a folder they are the archive's own files, and a private
-    // archive's images need the unlock token.
+    // archive's images need the unlock token. Each one is marked with its place among the archive's media.
     const images = (html) => html.replace(/"\/api\/media\/([^/"]+)\/file\/playback\/(\d+)"/g,
-      (match, id, index) => id === item.id ? `"${escapeHTML(fileURL(item, "playback", Number(index)))}"` : match);
+      (match, id, index) => id === item.id ? `"${escapeHTML(fileURL(item, "playback", Number(index)))}" data-zoom="${Number(index)}"` : match);
     if (readOnly) {
       articleCache.set(item.id, images(item.article_html || ""));
     } else if (!articleCache.has(item.id)) {
@@ -618,7 +637,18 @@ async function loadArticle(item) {
       articleCache.set(item.id, images(html));
     }
     // The article is built server-side from a fixed set of tags, with local images only.
-    if (target.isConnected) target.innerHTML = articleCache.get(item.id);
+    if (!target.isConnected) return;
+    target.innerHTML = articleCache.get(item.id);
+    // An image is a button that shows it large, as the media of a thread are.
+    target.querySelectorAll("img[data-zoom]").forEach((image) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "article-zoom";
+      button.dataset.zoom = image.dataset.zoom;
+      button.setAttribute("aria-label", t("detail.showMedia", { index: Number(image.dataset.zoom) + 1, count: attachments(item).length }));
+      image.replaceWith(button);
+      button.append(image);
+    });
   } catch {
     if (target.isConnected) target.innerHTML = `<p class="inline-error">${t("detail.articleError")}</p>`;
   }
@@ -627,7 +657,8 @@ async function loadArticle(item) {
 function renderArticle(item) {
   const ready = item.status === "ready";
   const details = item.details || {};
-  const byline = [item.author, item.published_at ? dateLabel(item.published_at) : null].filter(Boolean).map(escapeHTML).join(" · ");
+  const byline = [item.author, item.published_at ? dateLabel(item.published_at) : null,
+    details.modified ? t("detail.edited", { date: dateLabel(details.modified) }) : null].filter(Boolean).map(escapeHTML).join(" · ");
   detailSignature = detailSignatureOf(item);
   $("#detail-content").innerHTML = `
     ${ready ? "" : jobBlock(item)}
@@ -993,8 +1024,18 @@ $("#empty-action").addEventListener("click", () => {
   else { state.platform = ""; state.from = ""; state.to = ""; setFullText(false); syncFilters(); setView("all"); }
 });
 
+// Buttons open and close their dialog with the commandfor and command attributes; browsers without them get this.
+if (!("commandForElement" in HTMLButtonElement.prototype)) {
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("button[commandfor]");
+    const dialog = button && document.getElementById(button.getAttribute("commandfor"));
+    if (!dialog) return;
+    if (button.getAttribute("command") === "show-modal" && !dialog.open) dialog.showModal();
+    else if (button.getAttribute("command") === "close") dialog.close();
+  });
+}
+
 // Detail dialog.
-$("#close-detail").addEventListener("click", () => $("#detail-dialog").close());
 $("#detail-dialog").addEventListener("close", () => {
   const video = $("#detail-content video");
   if (video) { video.pause(); video.removeAttribute("src"); video.load(); }
@@ -1003,7 +1044,8 @@ $("#detail-dialog").addEventListener("close", () => {
   if (detailPushed) { detailPushed = false; address = addressOf(); history.back(); } else if (state.wanted === undefined) syncAddress("replace");
 });
 // A click on the backdrop, outside a dialog's box, closes it; a drag that starts inside (selecting text) does not.
-document.querySelectorAll("dialog").forEach((dialog) => {
+// The closedby attribute asks the browser for it; this is for those that do not know the attribute.
+if (!("closedBy" in HTMLDialogElement.prototype)) document.querySelectorAll("dialog").forEach((dialog) => {
   const outside = (event) => {
     const rect = dialog.getBoundingClientRect();
     return event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom);
@@ -1054,7 +1096,9 @@ $("#media-dialog").addEventListener("close", () => { $("#media-content").innerHT
 
 $("#detail-content").addEventListener("click", (event) => {
   const gallery = event.target.closest("[data-attachment]");
-  if (gallery?.classList.contains("thread-thumb")) openMedium(Number(gallery.dataset.attachment));
+  const zoom = event.target.closest(".article-zoom");
+  if (zoom) openMedium(Number(zoom.dataset.zoom));
+  else if (gallery?.classList.contains("thread-thumb")) openMedium(Number(gallery.dataset.attachment));
   else if (gallery && showAttachment(Number(gallery.dataset.attachment))) {
     $(`.gallery-button[data-attachment="${state.currentAttachment}"]`)?.focus({ preventScroll: true });
   }
@@ -1260,7 +1304,7 @@ function closePlayer() {
 function playerStep(step) {
   const target = player.index + step;
   if (target < 0 || target >= player.items.length) return;
-  $("#player-track").children[target].scrollIntoView({ block: "start", behavior: "smooth" });
+  $("#player-track").children[target].scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   activateSlide(target);
 }
 
@@ -1383,6 +1427,7 @@ document.addEventListener("keydown", (event) => {
 // Preferences: language and theme.
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
+  $('meta[name="color-scheme"]').content = theme;
   document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => { meta.content = theme === "dark" ? "#14161c" : "#fafbfc"; });
   // An icon alone: its name is for screen readers and the tooltip.
   const label = t(theme === "dark" ? "theme.light" : "theme.dark");
@@ -1414,6 +1459,7 @@ function setSettings(open, refocus = false) {
 function changeLanguage(language) {
   if (language === currentLanguage) return;
   setLanguage(language);
+  searchTexts = new WeakMap(); // tag names are translated
   applyTheme(document.documentElement.dataset.theme);
   renderSettings();
   render();
@@ -1431,9 +1477,10 @@ $("#settings-menu").addEventListener("click", (event) => {
   if (item.dataset.language) changeLanguage(item.dataset.language);
 }, true);
 $("#settings-menu").addEventListener("keydown", (event) => {
-  if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
   event.preventDefault();
   const items = [...$("#settings-menu").querySelectorAll("button:not(:disabled)")];
+  if (event.key === "Home" || event.key === "End") { items.at(event.key === "Home" ? 0 : -1).focus(); return; }
   items[(items.indexOf(document.activeElement) + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
 });
 $("#settings-menu").addEventListener("focusout", (event) => {

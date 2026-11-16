@@ -25,11 +25,12 @@ document.querySelectorAll("[data-languages]").forEach((list) => {
 
 // t("key", {name: value}) fills {name} placeholders; "(s)" marks are resolved from a `count`-like number,
 // by the language's own rule: plural from 2 in French, for anything but 1 in English ("0 archives").
+const pluralRules = {};
 function t(key, params = {}) {
   let text = TRANSLATIONS[currentLanguage]?.[key] ?? TRANSLATIONS.en?.[key] ?? key;
   for (const [name, value] of Object.entries(params)) text = text.split(`{${name}}`).join(String(value));
   const number = params.count;
-  const plural = number !== undefined && new Intl.PluralRules(locale()).select(Number(number)) !== "one";
+  const plural = number !== undefined && (pluralRules[locale()] ||= new Intl.PluralRules(locale())).select(Number(number)) !== "one";
   if (number !== undefined) text = text.replace(/\(s\)/g, plural ? "s" : "");
   return text;
 }

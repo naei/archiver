@@ -5,7 +5,12 @@ let mode = "login";
 // Where to go once signed in: a path on this site only, never another origin.
 function nextPage() {
   const next = new URLSearchParams(location.search).get("next") || "/";
-  const page = next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/";
+  // Resolved the way the browser will follow it: a tab or a backslash can turn what looks like a path into another site.
+  let page = "/";
+  try {
+    const url = new URL(next, location.origin);
+    if (next.startsWith("/") && url.origin === location.origin) page = url.pathname + url.search + url.hash;
+  } catch { /* not an address: the library */ }
   // The view asked for before logging in (#tag=…) stays with the address through the redirection.
   return page.includes("#") ? page : page + location.hash;
 }
@@ -19,11 +24,19 @@ function render() {
   $("#confirm-field").hidden = !setup;
   $("#confirm").required = setup;
   $("#password").autocomplete = setup ? "new-password" : "current-password";
+  // Creating the account: the browser checks the length the hint asks for, and reads the hint with the field.
+  if (setup) { $("#password").minLength = 12; $("#password").setAttribute("aria-describedby", "password-hint"); }
+  else { $("#password").removeAttribute("minlength"); $("#password").removeAttribute("aria-describedby"); }
 }
 
 function showError(message) {
   $("#auth-error").textContent = message;
   $("#auth-error").hidden = false;
+  // Back on the field to correct, marked as wrong until it is typed in again.
+  const field = $("#username").value ? $("#password") : $("#username");
+  field.setAttribute("aria-invalid", "true");
+  field.addEventListener("input", () => field.removeAttribute("aria-invalid"), { once: true });
+  field.focus();
 }
 
 async function start() {

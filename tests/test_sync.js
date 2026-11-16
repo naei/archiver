@@ -114,7 +114,7 @@ function editing(privateArchive = true) {
     "#note-input": { value: "saved note" }, "#note-status": {},
     "#detail-dialog": { open: true, close() { this.open = false; } },
     "#title-dialog": { open: true, close() { this.open = false; } }, "#export-dialog": { open: false }, "#player": { hidden: true },
-    "#article-body": { isConnected: true, innerHTML: "" },
+    "#article-body": { isConnected: true, innerHTML: "", querySelectorAll: () => [] },
   };
   const context = {
     state: { items: [archive], currentId: archive.id, unlocked: true, selected: new Set([archive.id]),

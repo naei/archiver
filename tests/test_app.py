@@ -659,6 +659,44 @@ class WebArchiveTests(unittest.TestCase):
         self.assertIn('<a href="https://wiki.test/wiki/Autre"', body)
         self.assertIsNone(article["author"])
 
+    def test_text_blocks_are_paragraphs_and_a_repeated_image_is_shown_once(self):
+        filler = "".join(f"<div class='text'>Block {n}: a main text long enough to be taken for the body of the article, "
+                         f"with whole sentences and details worth keeping in a personal archive.</div>" for n in range(8))
+        page = ("<html><head><title>A subject</title></head><body><article><h1>A subject</h1>"
+                "<img src='/cover.png' alt=''><img src='/cover.png' alt=''>"
+                "<div class='row'><span><a href='/author/alex-doe'>Alex Doe</a></span><span>on 20 January 2026"
+                "<p>| Updated on 10 November 2026</p></span></div>"
+                "<div class='text'>« <em>A quoted question?</em> » It was asked, as <a href='/other'>told</a> by its author, "
+                "and <a href='/more'><em>answered</em></a> at length in the pages that followed this one.</div>"
+                f"{filler}<p><img src='/one.png' alt=''></p><p><img src='/two.png' alt=''></p>"
+                "<div class='text'>A last block: the text that closes the article, long enough to be kept with the rest "
+                "of it and not taken for a caption.</div>"
+                # A paragraph that a heading closed too early: its text is left bare in the block, after the heading.
+                "<div class='part'><p class='lead'><h3>A heading</h3>Text left bare after it (as <em>Some Title</em>) says, "
+                "and it goes on for a while so that it is kept with the rest of the article.<br />\n<br />\n"
+                "« <em>A second paragraph, </em>its author sums up.<em> It follows an empty line</em>. » And then it ends."
+                "<br /><br /><sup>1. A note set small: it said « <em>nothing of the kind</em> », before the second part.</sup>"
+                "</p></div></article></body></html>").encode()
+        article = extract(page, "https://blog.test/a-subject")
+        images = {f"https://blog.test/{name}.png": f"/local/{name}" for name in ("cover", "one", "two")}
+        body = render(article["main"], "https://blog.test/a-subject", images, article["title"])
+        self.assertRegex(body, r"<p>« <em>A quoted question\?</em> » It was asked, as <a [^>]*>told</a> by its author, "
+                               r"and <a [^>]*><em>answered</em></a> at length in the pages that followed this one\.\s*</p>")
+        self.assertRegex(body, r"<h3>A heading</h3>\s*<p>\s*Text left bare after it \(as <em>Some Title</em>\) says, and it goes on "
+                               r"for a while so that it is kept with the rest of the article\.\s*</p>\s*"
+                               r"<p>\s*« <em>A second paragraph, </em>its author sums up\.<em> It follows an empty line</em>\. » "
+                               r"And then it ends\.\s*</p>")
+        # The lines that sign and date the article give its author and leave its text; a note keeps its spaces.
+        self.assertEqual((article["author"], article["modified"]), ("Alex Doe", "2026-11-10"))
+        self.assertNotIn("Alex Doe", body)
+        self.assertNotIn("Updated on", body)
+        self.assertIn("1. A note set small: it said « <em>nothing of the kind</em> », before the second part.", body)
+        self.assertEqual(article["images"], [f"https://blog.test/{name}.png" for name in ("cover", "one", "two")])
+        self.assertEqual(body.count('<img src="/local/cover"'), 1)
+        # Images that follow each other form a grid; one on its own stays as it is.
+        self.assertRegex(body, r'<div class="image-grid"><img src="/local/one"[^>]*>\s*<img src="/local/two"[^>]*></div>')
+        self.assertEqual(body.count("image-grid"), 1)
+
     def test_blocked_page_is_archived_from_the_site_feed(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STORAGE_BACKEND": "local"}):
             content = "".join(f"<p>Paragraphe {n} du flux, avec suffisamment de texte pour former un article complet.</p>" for n in range(5))
@@ -708,6 +746,42 @@ class WebArchiveTests(unittest.TestCase):
             self.assertFalse((directory / "article.html").exists())
             record = json.loads((directory / "archive.json").read_text())
             self.assertEqual(Store.record_values(record, "local", 0)["original"], "original.mp4")
+
+    def test_a_page_that_is_a_video_is_archived_as_its_best_quality(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STORAGE_BACKEND": "local"}):
+            files = {}
+            for name, size in (("low", "64x48"), ("high", "128x96")):
+                path = Path(temp) / f"{name}.mp4"
+                subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", f"testsrc=s={size}:d=1",
+                                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
+                files[name] = path.read_bytes()
+            page = ('<html><head><title>A test video</title><meta property="og:type" content="video.other">'
+                    '<meta property="og:site_name" content="The Site"><meta name="description" content="What the page says of it.">'
+                    "</head><body><div id=\"player\"></div><p>Other videos: 12K 45K 3K</p></body></html>").encode()
+            site = LocalSite({
+                "/watch": (200, {"Content-Type": "text/html; charset=utf-8"}, page),
+                "/low.mp4": (200, {"Content-Type": "video/mp4"}, files["low"]),
+                "/high.mp4": (200, {"Content-Type": "video/mp4"}, files["high"]),
+                "/related.json": (200, {"Content-Type": "application/json"}, b"{}"),
+            })
+            self.addCleanup(site.close)
+            store = Store(Path(temp) / "data")
+            worker = Downloader(store, Storage(store.root))
+            item = {"id": "web-00000000000000cc", "source_url": site.url("/watch"), "platform": "Web"}
+            with closing(store.connect()) as db, db:
+                db.execute("INSERT INTO media (id, source_url, platform, created_at) VALUES (?, ?, 'Web', '2026-01-01')",
+                           (item["id"], item["source_url"]))
+            # What the page's player lists: the video in two qualities, and something that is not a video.
+            found = [site.url("/low.mp4"), site.url("/high.mp4"), site.url("/related.json"), site.url("/gone.mp4")]
+            with patch("archiver.ytdlp.Session.files", return_value=found):
+                worker.download_web(item)
+            archived = store.get(item["id"])
+            self.assertEqual((archived["status"], archived["title"]), ("ready", "A test video"))
+            self.assertEqual((archived["description"], archived["details"]["site"]), ("What the page says of it.", "The Site"))
+            medium = archived["attachments"][0]
+            self.assertEqual((medium["type"], medium["width"], medium["height"]), ("video", 128, 96))
+            self.assertEqual(medium["source_url"], site.url("/high.mp4"))
+            self.assertFalse((worker.storage.directory(item["id"]) / "article.html").exists())
 
     def test_direct_gif_without_a_precise_type_is_archived_from_its_extension(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STORAGE_BACKEND": "local"}):
@@ -886,7 +960,7 @@ class MemoryTests(unittest.TestCase):
         page = (self.store.root / "media" / "index.html").read_text()
         self.assertIn('data-readonly="1"', page)
         self.assertIn('"web"', page)
-        self.assertIn("<p>Bonjour<\\/p>", page)  # the article travels with the page, escaped inside its script
+        self.assertIn("\\u003cp>Bonjour\\u003c/p>", page)  # the article travels with the page, escaped inside its script
         self.assertFalse(self.store.changed.is_set())
 
     def test_viewer_keeps_changes_made_during_publication_pending(self):
@@ -1927,6 +2001,8 @@ class HTTPTests(ServerTestCase):
         # Once signed in, the login page returns to the requested page, on this site only.
         self.assertEqual(self.request("GET", "/login?next=/share?url=x")[1]["Location"], "/share?url=x")
         self.assertEqual(self.request("GET", "/login?next=//evil.test")[1]["Location"], "/")
+        self.assertEqual(self.request("GET", "/login?next=/%09/evil.test")[1]["Location"], "/")
+        self.assertNotIn("X-Injected", self.request("GET", "/login?next=/%0d%0aX-Injected:%201")[1])
         self.assertEqual(self.request("POST", "/api/auth/logout")[0], 200)
         self.assertEqual(self.request("GET", "/api/media/changes")[0], 401)
         # The account's credentials sent with a request open nothing: only a session does. No browser prompt.
@@ -2270,7 +2346,7 @@ class EncryptedStorageTests(unittest.TestCase):
         self.maintenance.write_viewer()
         self.assertFalse((root / "index.html").exists())
         page = crypto.reader(stored((root / "index.html.age").read_bytes()), crypto.Key(KEY)).read().decode()
-        self.assertIn("<p>Bonjour<\\/p>", page)
+        self.assertIn("\\u003cp>Bonjour\\u003c/p>", page)
         self.maintenance.verify(item)
         self.assertEqual(self.store.get(item["id"])["integrity"], "ok")
         path = self.folder(item) / "image.bin.age"
