@@ -19,7 +19,7 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#main" data-i18n="skip">Skip to the library</a>
+  <a class="skip-link" href="#main" data-i18n="skip"></a>
   <header class="mobile-bar">
     <button class="icon-button" id="open-menu" type="button" aria-controls="sidebar" aria-expanded="false" data-i18n-aria="nav.menu"><span data-icon="menu"></span></button>
     <a class="brand" href="/" aria-label="Archiver"><img src="/favicon.svg" width="32" height="32" alt="">archiver</a>
@@ -28,77 +28,77 @@
   <aside class="sidebar" id="sidebar">
     <a class="brand" href="/" aria-label="Archiver"><img src="/favicon.svg" width="32" height="32" alt="">archiver</a>
     <nav aria-label="Library" data-i18n-aria="nav.all">
-      <button class="nav-button active" data-view="all"><span data-icon="library"></span><span data-i18n="nav.all">Library</span><span class="count" id="all-count">0</span></button>
-      <div class="tags-heading status-heading"><span data-i18n="statuses.heading">Status</span><button class="status-toggle" id="status-toggle" type="button" hidden></button></div>
-      <button class="nav-button" data-view="active" data-status hidden><span data-icon="download"></span><span data-i18n="nav.active">In progress</span><span class="count" id="active-count">0</span></button>
-      <button class="nav-button" data-view="error" data-status hidden><span data-icon="alert"></span><span data-i18n="nav.error">To check</span><span class="count" id="error-count">0</span></button>
-      <button class="nav-button" data-view="gone" data-status hidden><span data-icon="archive"></span><span data-i18n="nav.gone">Gone</span><span class="count" id="gone-count">0</span></button>
-      <button class="nav-button trash-button" data-view="trash" hidden><span data-icon="trash"></span><span data-i18n="nav.trash">Trash</span><span class="count" id="trash-count">0</span></button>
+      <button class="nav-button active" data-view="all"><span data-icon="library"></span><span data-i18n="nav.all"></span><span class="count" id="all-count">0</span></button>
+      <div class="tags-heading status-heading"><span data-i18n="statuses.heading"></span><button class="status-toggle" id="status-toggle" type="button" hidden></button></div>
+      <button class="nav-button" data-view="active" data-status hidden><span data-icon="download"></span><span data-i18n="nav.active"></span><span class="count" id="active-count">0</span></button>
+      <button class="nav-button" data-view="error" data-status hidden><span data-icon="alert"></span><span data-i18n="nav.error"></span><span class="count" id="error-count">0</span></button>
+      <button class="nav-button" data-view="gone" data-status hidden><span data-icon="archive"></span><span data-i18n="nav.gone"></span><span class="count" id="gone-count">0</span></button>
+      <button class="nav-button trash-button" data-view="trash" hidden><span data-icon="trash"></span><span data-i18n="nav.trash"></span><span class="count" id="trash-count">0</span></button>
     </nav>
-    <div class="tags-heading"><span data-i18n="tags.heading">Tags</span><span id="tags-icon" data-icon="tag"></span><button class="status-toggle" id="tags-clear" type="button" hidden></button></div>
-    <div class="tag-search" id="tag-search-field" hidden><span data-icon="search"></span><label class="sr-only" for="tag-search" data-i18n="tags.search">Search tags</label><input type="search" id="tag-search" enterkeyhint="search" autocomplete="off" data-i18n-placeholder="tags.search"></div>
+    <div class="tags-heading"><span data-i18n="tags.heading"></span><span id="tags-icon" data-icon="tag"></span><button class="status-toggle" id="tags-clear" type="button" hidden></button></div>
+    <div class="tag-search" id="tag-search-field" hidden><span data-icon="search"></span><label class="sr-only" for="tag-search" data-i18n="tags.search"></label><input type="search" id="tag-search" enterkeyhint="search" autocomplete="off" data-i18n-placeholder="tags.search"></div>
     <div id="tag-nav" class="tag-nav"></div>
     <div class="sidebar-bottom">
       <div class="preferences">
         <button class="sidebar-link settings-toggle" id="settings-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" data-i18n-aria="settings.open" data-i18n-title="settings.open"><span data-icon="settings"></span></button>
         <div class="context-menu settings-menu" id="settings-menu" role="menu" data-i18n-aria="settings.open" hidden>
-          <button role="menuitem" type="button" id="open-export"><span data-icon="download"></span><span data-i18n="export.title">Export the library</span></button>
-          <button role="menuitem" type="button" id="open-capture-menu" commandfor="capture-dialog" command="show-modal"><span data-icon="phone"></span><span data-i18n="capture.title">Archive from anywhere</span></button>
-          <button role="menuitem" type="button" id="open-shortcuts" commandfor="shortcuts-dialog" command="show-modal"><span data-icon="keyboard"></span><span data-i18n="shortcuts.title">Keyboard shortcuts</span></button>
-          <button role="menuitem" type="button" id="open-password"><span data-icon="key"></span><span data-i18n="password.title">Change the password</span></button>
-          <button role="menuitem" type="button" id="open-about" commandfor="about-dialog" command="show-modal"><span data-icon="info"></span><span data-i18n="about.open">About</span></button>
+          <button role="menuitem" type="button" id="open-export"><span data-icon="download"></span><span data-i18n="export.title"></span></button>
+          <button role="menuitem" type="button" id="open-capture-menu" commandfor="capture-dialog" command="show-modal"><span data-icon="phone"></span><span data-i18n="capture.title"></span></button>
+          <button role="menuitem" type="button" id="open-shortcuts" commandfor="shortcuts-dialog" command="show-modal"><span data-icon="keyboard"></span><span data-i18n="shortcuts.title"></span></button>
+          <button role="menuitem" type="button" id="open-account"><span data-icon="user"></span><span data-i18n="account.title"></span></button>
+          <button role="menuitem" type="button" id="open-about" commandfor="about-dialog" command="show-modal"><span data-icon="info"></span><span data-i18n="about.open"></span></button>
           <hr class="menu-separator">
-          <div role="group" aria-labelledby="settings-language" data-languages><p class="menu-label" id="settings-language" data-i18n="pref.language">Language</p></div>
+          <div role="group" aria-labelledby="settings-language" data-languages><p class="menu-label" id="settings-language" data-i18n="pref.language"></p></div>
         </div>
         <button class="sidebar-link theme-toggle" id="theme-toggle" type="button"><span data-icon="sun"></span></button>
         <button class="sidebar-link private-toggle" id="private-toggle" type="button" aria-pressed="false"></button>
         <button class="sidebar-link logout" id="logout" type="button" data-i18n-aria="auth.logout" data-i18n-title="auth.logout"><span data-icon="logout"></span></button>
       </div>
       <div class="sidebar-status">
-        <p class="sidebar-meta" data-i18n-title="storage.label"><span data-icon="drive"></span><span class="sr-only" data-i18n="storage.label">Storage used</span><span id="storage-size">—</span></p>
+        <p class="sidebar-meta" data-i18n-title="storage.label"><span data-icon="drive"></span><span class="sr-only" data-i18n="storage.label"></span><span id="storage-size">—</span></p>
         <p class="sidebar-meta" id="app-version"></p>
       </div>
     </div>
   </aside>
   <main id="main" tabindex="-1">
     <header class="page-header">
-      <h1 id="page-title" data-i18n="nav.all">Library</h1>
-      <button class="button secondary player-button" id="open-player" type="button"><span data-icon="play"></span><span data-i18n="player.open">Player</span></button>
+      <h1 id="page-title" data-i18n="nav.all"></h1>
+      <button class="button secondary player-button" id="open-player" type="button"><span data-icon="play"></span><span data-i18n="player.open"></span></button>
     </header>
 
     <section class="add-section">
       <form id="archive-form" class="url-form">
         <span class="url-icon" data-icon="link"></span>
-        <label class="sr-only" for="url" data-i18n="form.label">Link to archive</label>
+        <label class="sr-only" for="url" data-i18n="form.label"></label>
         <input id="url" name="url" type="text" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="url-hint" autocomplete="off" data-i18n-placeholder="form.placeholder" required maxlength="2048">
-        <span class="add-tags-field"><span data-icon="tag"></span><label class="sr-only" for="add-tags" data-i18n="tags.heading">Tags</label><input id="add-tags" type="text" autocomplete="off" data-i18n-placeholder="form.tagsPlaceholder" role="combobox" aria-autocomplete="list" aria-expanded="false" data-tag-suggest></span>
-        <button class="button primary" type="submit" id="archive-button"><span data-icon="plus"></span><span data-i18n="form.submit">Archive</span></button>
+        <span class="add-tags-field"><span data-icon="tag"></span><label class="sr-only" for="add-tags" data-i18n="tags.heading"></label><input id="add-tags" type="text" autocomplete="off" data-i18n-placeholder="form.tagsPlaceholder" role="combobox" aria-autocomplete="list" aria-expanded="false" data-tag-suggest></span>
+        <button class="button primary" type="submit" id="archive-button"><span data-icon="plus"></span><span data-i18n="form.submit"></span></button>
       </form>
-      <p class="form-hint" id="url-hint" role="status" hidden><span data-icon="info"></span><span data-i18n="form.fileHint">This link seems to lead straight to a file. It will be kept as it is, often without a title, an author or a date: to keep its context, archive the page that shows it instead.</span></p>
-      <div class="add-tag-chips" id="add-tag-chips" hidden></div>
+      <p class="form-hint" id="url-hint" role="status" hidden><span data-icon="info"></span><span data-i18n="form.fileHint"></span></p>
+      <div class="add-tag-chips" id="add-tag-chips"></div>
       <div id="share-banner" class="share-banner" role="status" hidden>
-        <div><strong data-i18n="share.received">Link received</strong><span id="share-link"></span></div>
-        <div class="share-actions"><button class="button secondary" id="cancel-share" type="button" data-i18n="share.ignore">Ignore</button><button class="button primary" id="confirm-share" type="button" data-i18n="share.confirm">Archive this link</button></div>
+        <div><strong data-i18n="share.received"></strong><span id="share-link"></span></div>
+        <div class="share-actions"><button class="button secondary" id="cancel-share" type="button" data-i18n="share.ignore"></button><button class="button primary" id="confirm-share" type="button" data-i18n="share.confirm"></button></div>
       </div>
       <p class="form-error" id="url-error" role="alert" hidden></p>
     </section>
 
     <div id="system-warning" class="notice" role="status" hidden></div>
-    <div id="connection-warning" class="notice" role="status" hidden data-i18n="connection.lost">Connection to the server lost. Retrying automatically…</div>
+    <div id="connection-warning" class="notice" role="status" hidden data-i18n="connection.lost"></div>
 
     <section class="collection">
       <div class="collection-toolbar">
-        <search class="search-field"><span data-icon="search"></span><label class="sr-only" for="search" data-i18n="search.label">Search the library</label><input type="search" id="search" enterkeyhint="search" autocomplete="off" data-i18n-placeholder="search.placeholder"></search>
+        <search class="search-field"><span data-icon="search"></span><label class="sr-only" for="search" data-i18n="search.label"></label><input type="search" id="search" enterkeyhint="search" autocomplete="off" data-i18n-placeholder="search.placeholder"></search>
         <p class="result-count" id="result-count" role="status"></p>
         <div class="collection-controls">
-          <button class="toolbar-button empty-trash" id="empty-trash" type="button" hidden><span data-icon="trash"></span><span data-i18n="trash.empty">Empty the trash</span></button>
-          <button class="toolbar-button" id="toggle-select" type="button"><span data-icon="check"></span><span data-i18n="select.start">Select</span></button>
-          <button class="toolbar-button" id="toggle-filters" type="button" aria-expanded="false" aria-controls="filter-panel"><span data-icon="filter"></span><span data-i18n="filter.open">Filters</span><span class="filter-count" id="filter-count"></span></button>
+          <button class="toolbar-button empty-trash" id="empty-trash" type="button" hidden><span data-icon="trash"></span><span data-i18n="trash.empty"></span></button>
+          <button class="toolbar-button" id="toggle-select" type="button"><span data-icon="check"></span><span data-i18n="select.start"></span></button>
+          <button class="toolbar-button" id="toggle-filters" type="button" aria-expanded="false" aria-controls="filter-panel"><span data-icon="filter"></span><span data-i18n="filter.open"></span><span class="filter-count" id="filter-count"></span></button>
           <button class="toolbar-button view-options-toggle" id="toggle-view-options" type="button" aria-expanded="false" aria-controls="view-options" data-i18n-aria="layout.options"><span data-icon="more"></span></button>
           <div class="view-options" id="view-options">
             <button class="toolbar-button" id="toggle-layout" type="button"></button>
-            <label class="sr-only" for="sort" data-i18n="sort.label">Sort</label>
-            <select id="sort"><option value="newest" data-i18n="sort.newest">Recently added</option><option value="oldest" data-i18n="sort.oldest">Oldest added</option><option value="published" data-i18n="sort.published">Recently published</option><option value="published-oldest" data-i18n="sort.publishedOldest">Oldest published</option><option value="title" data-i18n="sort.title">Title A–Z</option><option value="title-desc" data-i18n="sort.titleDesc">Title Z–A</option></select>
+            <label class="sr-only" for="sort" data-i18n="sort.label"></label>
+            <select id="sort"><option value="newest" data-i18n="sort.newest"></option><option value="oldest" data-i18n="sort.oldest"></option><option value="published" data-i18n="sort.published"></option><option value="published-oldest" data-i18n="sort.publishedOldest"></option><option value="title" data-i18n="sort.title"></option><option value="title-desc" data-i18n="sort.titleDesc"></option></select>
           </div>
         </div>
       </div>
@@ -106,23 +106,23 @@
         <div class="selection-bar-content">
           <button class="icon-button" id="selection-close" type="button" data-i18n-aria="select.stop" data-i18n-title="select.stop"><span data-icon="close"></span></button>
           <span class="selection-count" id="selection-count" role="status"></span>
-          <button class="text-link" id="select-all" type="button" data-i18n="select.all">Select all</button>
+          <button class="text-link" id="select-all" type="button" data-i18n="select.all"></button>
           <span class="selection-spacer"></span>
-          <form class="selection-tag" id="selection-tag-form"><label class="sr-only" for="selection-tag" data-i18n="select.tagLabel">Tag to add</label><input id="selection-tag" maxlength="40" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" data-tag-suggest data-i18n-placeholder="detail.addTagPlaceholder"><button class="button secondary" type="submit" data-i18n="select.addTag">Add tag</button></form>
-          <button class="button secondary" id="selection-restore" type="button" data-i18n="trash.restore" hidden>Restore</button>
-          <button class="button danger" id="selection-delete" type="button" data-i18n="action.delete">Delete</button>
+          <form class="selection-tag" id="selection-tag-form"><label class="sr-only" for="selection-tag" data-i18n="select.tagLabel"></label><input id="selection-tag" maxlength="40" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" data-tag-suggest data-i18n-placeholder="detail.addTagPlaceholder"><button class="button secondary" type="submit" data-i18n="select.addTag"></button></form>
+          <button class="button secondary" id="selection-restore" type="button" data-i18n="trash.restore" hidden></button>
+          <button class="button danger" id="selection-delete" type="button" data-i18n="action.delete"></button>
         </div>
       </div>
-      <p id="trash-note" class="collection-note" data-i18n="trash.note" hidden>Archives in the trash are deleted for good after 30 days.</p>
+      <p id="trash-note" class="collection-note" data-i18n="trash.note" hidden></p>
       <div id="filter-panel" class="filter-panel" hidden>
-        <label class="filter-field" for="filter-platform"><span data-i18n="filter.platform">Platform</span>
-          <select id="filter-platform"><option value="" data-i18n="filter.allPlatforms">All platforms</option></select></label>
-        <label class="filter-field" for="filter-date-field"><span data-i18n="filter.date">Date</span>
-          <select id="filter-date-field"><option value="created_at" data-i18n="date.added">Added</option><option value="published_at" data-i18n="date.published">Published</option></select></label>
-        <label class="filter-field" for="filter-from"><span data-i18n="filter.from">From</span><input type="date" id="filter-from"></label>
-        <label class="filter-field" for="filter-to"><span data-i18n="filter.to">To</span><input type="date" id="filter-to"></label>
-        <label class="filter-check" for="search-text"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText">Search inside articles and subtitles too</span></label>
-        <button class="text-link filter-clear" id="filter-clear" type="button" data-i18n="filter.clear">Clear filters</button>
+        <label class="filter-field" for="filter-platform"><span data-i18n="filter.platform"></span>
+          <select id="filter-platform"><option value="" data-i18n="filter.allPlatforms"></option></select></label>
+        <label class="filter-field" for="filter-date-field"><span data-i18n="filter.date"></span>
+          <select id="filter-date-field"><option value="created_at" data-i18n="date.added"></option><option value="published_at" data-i18n="date.published"></option></select></label>
+        <label class="filter-field" for="filter-from"><span data-i18n="filter.from"></span><input type="date" id="filter-from"></label>
+        <label class="filter-field" for="filter-to"><span data-i18n="filter.to"></span><input type="date" id="filter-to"></label>
+        <label class="filter-check" for="search-text"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText"></span></label>
+        <button class="text-link filter-clear" id="filter-clear" type="button" data-i18n="filter.clear"></button>
       </div>
       <div id="active-filter" class="active-filter" hidden></div>
       <div id="library" tabindex="-1" class="media-grid" aria-busy="true"></div>
@@ -146,109 +146,117 @@
   <dialog closedby="any" id="delete-dialog" class="confirm-dialog" aria-labelledby="delete-title">
     <h2 id="delete-title"></h2>
     <p id="delete-text"></p>
-    <div class="confirm-actions"><button class="button secondary" id="cancel-delete" type="button" commandfor="delete-dialog" command="close" data-i18n="delete.cancel">Keep</button><button class="button danger" id="confirm-delete" data-i18n="action.delete">Delete</button></div>
+    <div class="confirm-actions"><button class="button secondary" id="cancel-delete" type="button" commandfor="delete-dialog" command="close" data-i18n="delete.cancel"></button><button class="button danger" id="confirm-delete" data-i18n="action.delete"></button></div>
   </dialog>
   <dialog closedby="any" id="duplicate-dialog" class="confirm-dialog" aria-labelledby="duplicate-title" aria-describedby="duplicate-text duplicate-hint">
-    <h2 id="duplicate-title" data-i18n="duplicate.title">Link already archived</h2>
+    <h2 id="duplicate-title" data-i18n="duplicate.title"></h2>
     <p id="duplicate-text"></p>
     <p id="duplicate-hint"></p>
-    <div class="confirm-actions"><button class="button secondary" id="duplicate-cancel" type="button" commandfor="duplicate-dialog" command="close" data-i18n="action.cancel">Cancel</button><button class="button secondary" id="duplicate-view" data-i18n="duplicate.view">View archive</button><button class="button primary" id="duplicate-again" data-i18n="duplicate.again">Archive again</button></div>
+    <div class="confirm-actions"><button class="button secondary" id="duplicate-cancel" type="button" commandfor="duplicate-dialog" command="close" data-i18n="action.cancel"></button><button class="button secondary" id="duplicate-view" data-i18n="duplicate.view"></button><button class="button primary" id="duplicate-again" data-i18n="duplicate.again"></button></div>
   </dialog>
   <dialog closedby="any" id="tag-dialog" class="confirm-dialog" aria-labelledby="tag-dialog-title">
     <h2 id="tag-dialog-title"></h2>
     <p id="tag-dialog-text"></p>
-    <form id="tag-dialog-form"><label class="sr-only" for="tag-dialog-input" data-i18n="tagMenu.newName">New name</label><input id="tag-dialog-input" class="dialog-input" maxlength="40" autocomplete="off"></form>
+    <form id="tag-dialog-form"><label class="sr-only" for="tag-dialog-input" data-i18n="tagMenu.newName"></label><input id="tag-dialog-input" class="dialog-input" maxlength="40" autocomplete="off"></form>
     <p id="tag-dialog-error" class="inline-error" role="alert" hidden></p>
     <div class="confirm-actions"><button class="button secondary" id="tag-dialog-cancel" type="button" commandfor="tag-dialog" command="close"></button><button class="button primary" id="tag-dialog-confirm"></button></div>
   </dialog>
   <dialog closedby="any" id="title-dialog" class="confirm-dialog" aria-labelledby="title-dialog-title" aria-describedby="title-dialog-text">
-    <h2 id="title-dialog-title" data-i18n="titleDialog.title">Personal title</h2>
+    <h2 id="title-dialog-title" data-i18n="titleDialog.title"></h2>
     <p id="title-dialog-text"></p>
     <form id="title-dialog-form">
-      <label class="sr-only" for="title-dialog-input" data-i18n="titleDialog.title">Personal title</label><input id="title-dialog-input" class="dialog-input" maxlength="200" autocomplete="off">
+      <label class="sr-only" for="title-dialog-input" data-i18n="titleDialog.title"></label><input id="title-dialog-input" class="dialog-input" maxlength="200" autocomplete="off">
       <p id="title-dialog-error" class="inline-error" role="alert" hidden></p>
-      <div class="confirm-actions"><button class="text-link dialog-reset" type="button" id="title-dialog-reset" data-i18n="titleDialog.reset">Back to the original title</button><button class="button secondary" type="button" id="title-dialog-cancel" commandfor="title-dialog" command="close" data-i18n="action.cancel">Cancel</button><button class="button primary" id="title-dialog-confirm" data-i18n="titleDialog.confirm">Save</button></div>
+      <div class="confirm-actions"><button class="text-link dialog-reset" type="button" id="title-dialog-reset" data-i18n="titleDialog.reset"></button><button class="button secondary" type="button" id="title-dialog-cancel" commandfor="title-dialog" command="close" data-i18n="action.cancel"></button><button class="button primary" id="title-dialog-confirm" data-i18n="titleDialog.confirm"></button></div>
     </form>
   </dialog>
-  <dialog closedby="any" id="password-dialog" class="confirm-dialog" aria-labelledby="password-title" aria-describedby="password-text">
-    <h2 id="password-title" data-i18n="password.title">Change the password</h2>
-    <p id="password-text" data-i18n="password.text">Your other devices will be logged out, and private archives hidden again.</p>
-    <form id="password-form" class="dialog-fields">
-      <label class="field" for="password-current"><span data-i18n="password.current">Current password</span><input id="password-current" type="password" autocomplete="current-password" required></label>
-      <label class="field" for="password-new"><span data-i18n="password.new">New password</span><input id="password-new" type="password" autocomplete="new-password" required minlength="12" aria-describedby="password-hint"><span class="field-hint" id="password-hint" data-i18n="auth.passwordHint">At least 12 characters.</span></label>
-      <label class="field" for="password-repeat"><span data-i18n="password.repeat">Confirm the new password</span><input id="password-repeat" type="password" autocomplete="new-password" required></label>
+  <dialog closedby="any" id="account-dialog" class="confirm-dialog" aria-labelledby="account-title" aria-describedby="account-text">
+    <h2 id="account-title" data-i18n="account.title"></h2>
+    <p id="account-text" data-i18n="account.text"></p>
+    <form id="account-form" class="dialog-fields">
+      <label class="field" for="account-username"><span data-i18n="auth.username"></span><input id="account-username" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" required></label>
+      <label class="field" for="account-current"><span data-i18n="account.current"></span><input id="account-current" name="current" type="password" autocomplete="current-password" required aria-describedby="account-current-hint"><span class="field-hint" id="account-current-hint" data-i18n="account.currentHint"></span></label>
+      <label class="field" for="account-new"><span data-i18n="account.new"></span><input id="account-new" name="password" type="password" autocomplete="new-password" minlength="12" aria-describedby="account-new-hint"><span class="field-hint" id="account-new-hint" data-i18n="account.newHint"></span></label>
+      <label class="field" for="account-repeat"><span data-i18n="account.repeat"></span><input id="account-repeat" type="password" autocomplete="new-password"></label>
     </form>
-    <p id="password-error" class="inline-error" role="alert" hidden></p>
-    <div class="confirm-actions"><button class="button secondary" id="password-cancel" commandfor="password-dialog" command="close" type="button" data-i18n="action.cancel">Cancel</button><button class="button primary" id="password-submit" type="submit" form="password-form" data-i18n="password.submit">Change</button></div>
+    <p id="account-confirm" role="status" hidden></p>
+    <p id="account-error" class="inline-error" role="alert" hidden></p>
+    <div class="confirm-actions"><button class="button secondary" id="account-back" type="button" data-i18n="account.back" hidden></button><button class="button secondary" id="account-cancel" commandfor="account-dialog" command="close" type="button" data-i18n="action.cancel"></button><button class="button primary" id="account-submit" type="submit" form="account-form" data-i18n="account.submit"></button></div>
   </dialog>
   <dialog closedby="any" id="shortcuts-dialog" class="capture-dialog shortcuts-dialog" aria-labelledby="shortcuts-title">
-    <div class="capture-header"><h2 id="shortcuts-title" data-i18n="shortcuts.title">Keyboard shortcuts</h2><button class="icon-button" id="close-shortcuts" type="button" commandfor="shortcuts-dialog" command="close" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
+    <div class="capture-header"><h2 id="shortcuts-title" data-i18n="shortcuts.title"></h2><button class="icon-button" id="close-shortcuts" type="button" commandfor="shortcuts-dialog" command="close" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
     <section>
-      <h3 data-i18n="nav.all">Library</h3>
+      <h3 data-i18n="nav.all"></h3>
       <dl class="shortcuts">
-        <div><dt><kbd>N</kbd></dt><dd data-i18n="shortcuts.add">Paste a link to archive</dd></div>
-        <div><dt><kbd>/</kbd></dt><dd data-i18n="search.label">Search the library</dd></div>
-        <div><dt><kbd>?</kbd></dt><dd data-i18n="shortcuts.help">Show these shortcuts</dd></div>
-        <div><dt><kbd>Ctrl</kbd> + <span data-i18n="shortcuts.click">click</span></dt><dd data-i18n="shortcuts.select">Select an archive (⌘ on a Mac); Shift extends the selection</dd></div>
-        <div><dt><kbd>Esc</kbd></dt><dd data-i18n="shortcuts.escape">Close a window, the player or the selection</dd></div>
+        <div><dt><kbd>N</kbd></dt><dd data-i18n="shortcuts.add"></dd></div>
+        <div><dt><kbd>/</kbd></dt><dd data-i18n="search.label"></dd></div>
+        <div><dt><kbd>?</kbd></dt><dd data-i18n="shortcuts.help"></dd></div>
+        <div><dt><kbd>Ctrl</kbd> + <span data-i18n="shortcuts.click"></span></dt><dd data-i18n="shortcuts.select"></dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd data-i18n="shortcuts.escape"></dd></div>
       </dl>
     </section>
     <section>
-      <h3 data-i18n="shortcuts.media">Archive view and player</h3>
+      <h3 data-i18n="shortcuts.media"></h3>
       <dl class="shortcuts">
-        <div><dt><kbd>Space</kbd></dt><dd data-i18n="shortcuts.pause">Pause or play the video</dd></div>
-        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.seek">Move the video by 5 seconds (on a photo: previous or next item)</dd></div>
-        <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.medium">Previous or next item of the post</dd></div>
-        <div><dt><kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd data-i18n="shortcuts.note">Save the personal note (⌘ + Enter on a Mac)</dd></div>
+        <div><dt><kbd>Space</kbd></dt><dd data-i18n="shortcuts.pause"></dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.seek"></dd></div>
+        <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd data-i18n="shortcuts.medium"></dd></div>
+        <div><dt><kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd data-i18n="shortcuts.note"></dd></div>
       </dl>
     </section>
     <section>
-      <h3 data-i18n="player.open">Player</h3>
+      <h3 data-i18n="player.open"></h3>
       <dl class="shortcuts">
-        <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd data-i18n="shortcuts.posts">Previous or next archive</dd></div>
-        <div><dt><kbd>I</kbd></dt><dd data-i18n="shortcuts.info">Show or hide the information</dd></div>
+        <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd data-i18n="shortcuts.posts"></dd></div>
+        <div><dt><kbd>I</kbd></dt><dd data-i18n="shortcuts.info"></dd></div>
       </dl>
     </section>
   </dialog>
   <dialog closedby="any" id="private-dialog" class="confirm-dialog" aria-labelledby="private-title" aria-describedby="private-text">
-    <h2 id="private-title" data-i18n="private.show">Show private archives</h2>
-    <p id="private-text" data-i18n="private.text">Enter your password again. Reloading the page or clicking the lock hides them again.</p>
-    <form id="private-form"><label class="sr-only" for="private-password" data-i18n="auth.password">Password</label><input id="private-password" class="dialog-input" type="password" autocomplete="current-password" required></form>
+    <h2 id="private-title" data-i18n="private.show"></h2>
+    <p id="private-text" data-i18n="private.text"></p>
+    <form id="private-form"><label class="sr-only" for="private-password" data-i18n="auth.password"></label><input id="private-password" class="dialog-input" type="password" autocomplete="current-password" required></form>
     <p id="private-error" class="inline-error" role="alert" hidden></p>
-    <div class="confirm-actions"><button class="button secondary" id="private-cancel" commandfor="private-dialog" command="close" type="button" data-i18n="action.cancel">Cancel</button><button class="button primary" id="private-confirm" type="submit" form="private-form" data-i18n="private.confirm">Show</button></div>
+    <div class="confirm-actions"><button class="button secondary" id="private-cancel" commandfor="private-dialog" command="close" type="button" data-i18n="action.cancel"></button><button class="button primary" id="private-confirm" type="submit" form="private-form" data-i18n="private.confirm"></button></div>
   </dialog>
   <div class="context-menu" id="tag-menu" role="menu" hidden>
-    <button role="menuitem" data-tag-action="rename" data-i18n="action.rename">Rename</button>
-    <button role="menuitem" data-tag-action="delete" data-i18n="tagMenu.delete">Delete from all archives</button>
+    <button role="menuitem" data-tag-action="rename" data-i18n="action.rename"></button>
+    <button role="menuitem" data-tag-action="delete" data-i18n="tagMenu.delete"></button>
   </div>
   <!-- The archive menu opens at a point: this empty element, moved there, is what it is anchored to. -->
   <div class="card-menu-anchor" id="card-menu-anchor"></div>
   <div class="context-menu card-menu" id="card-menu" popover hidden></div>
   <dialog closedby="any" id="export-dialog" class="confirm-dialog export-dialog" aria-labelledby="export-title">
-    <h2 id="export-title" data-i18n="export.title">Export the library</h2>
-    <p data-i18n="export.text">A ZIP with the archives’ files and a page to browse them without the application. An interrupted download resumes where it stopped.</p>
+    <h2 id="export-title" data-i18n="export.title"></h2>
+    <p data-i18n="export.text"></p>
     <div class="export-scope" role="radiogroup" aria-labelledby="export-title">
-      <label class="export-option"><input type="radio" name="export-scope" value="all" checked><span data-i18n="export.scopeAll">The whole library</span></label>
-      <label class="export-option"><input type="radio" name="export-scope" value="tags"><span data-i18n="export.scopeTags">Some tags only</span></label>
+      <label class="export-option"><input type="radio" name="export-scope" value="all" checked><span data-i18n="export.scopeAll"></span></label>
+      <label class="export-option"><input type="radio" name="export-scope" value="tags"><span data-i18n="export.scopeTags"></span></label>
     </div>
-    <label class="export-option export-private" id="export-private-option" hidden for="export-private"><input type="checkbox" id="export-private"><span data-icon="lock"></span><span data-i18n="export.private">Include private archives</span></label>
+    <label class="export-option export-private" id="export-private-option" hidden for="export-private"><input type="checkbox" id="export-private"><span data-icon="lock"></span><span data-i18n="export.private"></span></label>
     <div id="export-tags" class="export-tags" hidden></div>
     <p class="export-summary" id="export-summary" role="status"></p>
-    <div class="confirm-actions"><button class="button secondary" id="export-cancel" type="button" commandfor="export-dialog" command="close" data-i18n="action.cancel">Cancel</button><a class="button primary" id="export-start" href="/api/export"><span data-icon="download"></span><span data-i18n="export.start">Download the ZIP</span></a></div>
+    <div class="confirm-actions"><button class="button secondary" id="export-cancel" type="button" commandfor="export-dialog" command="close" data-i18n="action.cancel"></button><a class="button primary" id="export-start" href="/api/export"><span data-icon="download"></span><span data-i18n="export.start"></span></a></div>
   </dialog>
   <dialog closedby="any" id="capture-dialog" class="capture-dialog" aria-labelledby="capture-title">
-    <div class="capture-header"><h2 id="capture-title" data-i18n="capture.title">Archive from anywhere</h2><button class="icon-button" id="close-capture" type="button" commandfor="capture-dialog" command="close" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
-    <p class="notice capture-local" id="capture-local" hidden data-i18n="capture.local">Archiver is only reachable from this computer. Host it at an address your phone can reach, over HTTPS (see the README).</p>
+    <div class="capture-header"><h2 id="capture-title" data-i18n="capture.title"></h2><button class="icon-button" id="close-capture" type="button" commandfor="capture-dialog" command="close" data-i18n-aria="action.close"><span data-icon="close"></span></button></div>
+    <p class="notice capture-local" id="capture-local" hidden data-i18n="capture.local"></p>
     <section>
-      <h3 data-i18n="capture.desktop">On a computer</h3>
-      <p data-i18n-html="capture.desktopText"></p>
+      <h3 data-i18n="capture.desktop"></h3>
+      <p data-i18n="capture.desktopText"></p>
+      <ol>
+        <li><span data-i18n="capture.desktop1"></span><a class="button secondary" href="/api/extension" download><span data-icon="download"></span><span data-i18n="capture.download"></span></a></li>
+        <li><span data-i18n-html="capture.desktop2"></span><code>chrome://extensions</code></li>
+        <li data-i18n-html="capture.desktop3"></li>
+        <li><span data-i18n-html="capture.desktop4"></span><code id="extension-server"></code></li>
+      </ol>
     </section>
     <section>
-      <h3 data-i18n="capture.android">On Android</h3>
+      <h3 data-i18n="capture.android"></h3>
       <p data-i18n-html="capture.androidText"></p>
     </section>
     <section>
-      <h3 data-i18n="capture.ios">On iPhone and iPad</h3>
+      <h3 data-i18n="capture.ios"></h3>
       <ol>
         <li data-i18n-html="capture.ios1"></li>
         <li data-i18n-html="capture.ios2"></li>
@@ -260,12 +268,12 @@
   <dialog closedby="any" id="about-dialog" class="about-dialog" aria-labelledby="about-title">
     <div class="about-header">
       <img src="/favicon.svg" width="40" height="40" alt="">
-      <h2 id="about-title" data-i18n="about.title">About Archiver</h2>
+      <h2 id="about-title" data-i18n="about.title"></h2>
       <button class="icon-button" id="close-about" type="button" commandfor="about-dialog" command="close" data-i18n-aria="action.close"><span data-icon="close"></span></button>
     </div>
     <p class="about-intro" data-i18n="about.intro"></p>
     <section class="about-section">
-      <h3 data-i18n="about.how">How it works</h3>
+      <h3 data-i18n="about.how"></h3>
       <ol class="about-steps">
         <li><strong data-i18n="about.step1Title"></strong><span data-i18n-html="about.step1"></span></li>
         <li><strong data-i18n="about.step2Title"></strong><span data-i18n-html="about.step2"></span></li>
@@ -274,15 +282,16 @@
       </ol>
     </section>
     <section class="about-section">
-      <h3 data-i18n="about.keep">Built to last</h3>
+      <h3 data-i18n="about.keep"></h3>
       <ul class="about-features">
         <li><span class="about-icon" data-icon="check"></span><div><strong data-i18n="about.keep1Title"></strong><p data-i18n-html="about.keep1"></p></div></li>
         <li><span class="about-icon" data-icon="archive"></span><div><strong data-i18n="about.keep2Title"></strong><p data-i18n-html="about.keep2"></p></div></li>
         <li><span class="about-icon" data-icon="download"></span><div><strong data-i18n="about.keep3Title"></strong><p data-i18n-html="about.keep3"></p></div></li>
       </ul>
     </section>
+    <div class="about-support"><p data-i18n="about.support"></p><div class="about-support-actions"><a class="button secondary" href="https://github.com/sponsors/naei" target="_blank" rel="noopener"><span data-icon="heart"></span><span>GitHub Sponsors</span></a><a class="button secondary" href="https://www.paypal.com/donate/?hosted_button_id=2RQ7B2W66RXXC" target="_blank" rel="noopener"><span data-icon="card"></span><span data-i18n="about.donateCard"></span></a></div></div>
     <p class="about-note"><span data-icon="info"></span><span data-i18n="about.use"></span></p>
-    <p class="about-source"><span data-i18n="about.license"></span> <a href="https://github.com/naei/archiver" target="_blank" rel="noopener" data-i18n="about.source">Source code</a></p>
+    <p class="about-source"><span data-i18n="about.license"></span> <a href="https://github.com/naei/archiver" target="_blank" rel="noopener" data-i18n="about.source"></a></p>
     <p class="about-source">Copyright © 2026 Lucas Pantanella</p>
   </dialog>
   <div id="player" class="player" role="dialog" aria-modal="true" data-i18n-aria="player.open" hidden>

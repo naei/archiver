@@ -1,10 +1,12 @@
 import gzip
 import hashlib
+import io
 import json
 import logging
 import mimetypes
 import re
 import threading
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from http.cookies import CookieError, SimpleCookie
@@ -22,6 +24,8 @@ from .store import ACTIVE, MEDIA_ID_PATTERN, PRIVATE, Store, clean_note, clean_t
 
 
 WEB = Path(__file__).resolve().parent.parent / "web"
+# The browser extension, offered as a download by the interface.
+EXTENSION = WEB.parent / "extension"
 log = logging.getLogger(__name__)
 COOKIE = "archiver_session"
 # Static files hold no library data and are served without a session.
@@ -216,6 +220,25 @@ class Handler(BaseHTTPRequestHandler):
     def auth_state(self):
         return {"configured": self.server.auth.configured(), "signed_in": self.server.auth.session(self.session_token())}
 
+    def extension(self):
+        """The browser extension as a ZIP holding one folder, to unzip and load in the browser."""
+        files = sorted(file for file in EXTENSION.rglob("*") if file.is_file() and not file.name.startswith("."))
+        if not files:
+            return self.json({"error": "The extension is not part of this installation."}, 404)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for file in files:
+                archive.write(file, f"archiver-extension/{file.relative_to(EXTENSION).as_posix()}")
+        body = buffer.getvalue()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", 'attachment; filename="archiver-extension.zip"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def asset(self, name):
         asset = WEB / name
         body = i18n.interface_script().encode() if name == "i18n.js" else asset.read_bytes()
@@ -286,7 +309,12 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authenticated():
             return
         if path == "/api/system":
-            return self.json({"dependencies": dependencies(), "storage": self.server.storage.mode, "version": version.VERSION})
+            return self.json({
+                "dependencies": dependencies(), "storage": self.server.storage.mode, "version": version.VERSION,
+                "username": self.server.auth.account()["username"],
+            })
+        if path == "/api/extension":
+            return self.extension()
         if path == "/api/media/changes":
             query = parse_qs(url.query)
             private = self.unlocked()
@@ -639,12 +667,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def mutation(self):
         path = urlparse(self.path).path
-        if path == "/api/account/password" and self.command == "POST":
-            data = self.body()
-            if not self.server.auth.change_password(data.get("current"), data.get("password")):
+        if path == "/api/account" and self.command == "POST":
+            data, auth = self.body(), self.server.auth
+            # A new password left empty keeps the current one.
+            password = data.get("password") if data.get("password") not in (None, "") else None
+            if not auth.update(data.get("current"), data.get("username"), password):
                 return self.json({"error": "Incorrect current password."}, 403)
-            # The other sessions are closed; this one goes on with a new session.
-            return self.json({"changed": True}, cookie=self.session_cookie(self.server.auth.open_session()))
+            # A new password closes the other sessions; this one goes on with a new session.
+            cookie = self.session_cookie(auth.open_session()) if password is not None else None
+            return self.json({"username": auth.account()["username"]}, cookie=cookie)
         if path in ("/api/private/unlock", "/api/private/lock") and self.command == "POST":
             return self.private_mutation(path.rsplit("/", 1)[1])
         if path in ("/api/tags/rename", "/api/tags/delete") and self.command == "POST":

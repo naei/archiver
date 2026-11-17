@@ -176,11 +176,83 @@ function schedule() {
 // suggestion turns what is typed into a chip; Backspace in the empty field removes the last one.
 let addTags = [];
 
+// The tags being viewed are offered for the link: shown apart, each is only given to it once pressed.
+const offeredTags = () => (state.view === "trash" ? []
+  : state.tags.filter((tag) => tag !== UNTAGGED && !addTags.some((other) => fold(other) === fold(tag))));
+const addTagsKey = () => JSON.stringify([addTags, offeredTags(), currentLanguage]);
+let addTagsShown = "";
+
 function renderAddTags() {
-  $("#add-tag-chips").innerHTML = addTags.map((tag, index) =>
-    `<span class="tag-chip"># ${escapeHTML(tag)}<button class="tag-remove" type="button" data-remove-add-tag="${index}" aria-label="${escapeHTML(t("detail.removeTag", { tag }))}">${icon("close")}</button></span>`).join("");
-  $("#add-tag-chips").hidden = !addTags.length;
+  const offered = offeredTags();
+  addTagsShown = addTagsKey();
+  const box = $("#add-tag-chips");
+  const before = { left: box.scrollLeft, count: box.querySelectorAll("[data-remove-add-tag]").length };
+  box.innerHTML = `<div class="add-tag-line">` + addTags.map((tag, index) =>
+    `<span class="tag-chip"># ${escapeHTML(tag)}<button class="tag-remove" type="button" data-remove-add-tag="${index}" aria-label="${escapeHTML(t("detail.removeTag", { tag }))}">${icon("close")}</button></span>`).join("")
+    + (offered.length ? `<span class="add-tag-offer"><span class="add-tag-label">${t("form.offeredTags")}</span>${offered.map((tag) =>
+      `<button class="tag-chip offered" type="button" data-offer-tag="${escapeHTML(tag)}" aria-label="${escapeHTML(t("form.addTag", { tag: tagLabel(tag) }))}">${icon("plus")}# ${escapeHTML(tagLabel(tag))}</button>`).join("")}</span>` : "") + "</div>";
+  alignAddTags();
+  // A tag just added is the one in view; taking one away leaves the line where it was.
+  box.scrollLeft = addTags.length > before.count ? box.scrollWidth : before.left;
+  markAddTagEdges();
 }
+
+// The tags are one line under the form, whose place is kept: the page never moves as they come and go. The line
+// starts under the field they are typed in, grows towards the left once it is longer, then scrolls.
+function alignAddTags() {
+  const box = $("#add-tag-chips");
+  const width = $("#archive-form").getBoundingClientRect().right - $(".add-tags-field").firstElementChild.getBoundingClientRect().left;
+  box.style.setProperty("--add-tags-width", `${Math.max(0, Math.round(width))}px`);
+}
+new ResizeObserver(() => { alignAddTags(); markAddTagEdges(); }).observe($("#archive-form"));
+
+// Where the line goes on beyond an edge it fades there; browsers that cannot tie this to scrolling in CSS are told.
+function markAddTagEdges() {
+  const box = $("#add-tag-chips");
+  // Longer than the form, the line can be held and dragged: its cursor says so.
+  box.classList.toggle("scrollable", box.scrollWidth > box.clientWidth);
+  if (CSS.supports("animation-timeline", "scroll()")) return;
+  box.classList.toggle("more-start", box.scrollLeft > 1);
+  box.classList.toggle("more-end", box.scrollLeft + box.clientWidth < box.scrollWidth - 1);
+}
+$("#add-tag-chips").addEventListener("scroll", markAddTagEdges, { passive: true });
+// Held with the mouse and dragged, the line follows the pointer, as it does under a finger. A press that moved the
+// line is not a click on the tag under it.
+let addTagsDrag = null;
+$("#add-tag-chips").addEventListener("pointerdown", (event) => {
+  const box = event.currentTarget;
+  if (event.pointerType !== "mouse" || event.button !== 0 || box.scrollWidth <= box.clientWidth) return;
+  addTagsDrag = { x: event.clientX, left: box.scrollLeft, moved: false };
+});
+window.addEventListener("pointermove", (event) => {
+  if (!addTagsDrag) return;
+  const box = $("#add-tag-chips");
+  const distance = event.clientX - addTagsDrag.x;
+  if (!addTagsDrag.moved && Math.abs(distance) < 5) return;
+  addTagsDrag.moved = true;
+  box.classList.add("dragging");
+  box.scrollLeft = addTagsDrag.left - distance;
+});
+window.addEventListener("pointerup", () => {
+  if (!addTagsDrag) return;
+  const box = $("#add-tag-chips");
+  if (addTagsDrag.moved) {
+    const swallow = (event) => { event.stopPropagation(); event.preventDefault(); };
+    box.addEventListener("click", swallow, { capture: true, once: true });
+    setTimeout(() => box.removeEventListener("click", swallow, { capture: true }));
+  }
+  box.classList.remove("dragging");
+  addTagsDrag = null;
+});
+// A mouse wheel moves along the line when it is longer than the form.
+$("#add-tag-chips").addEventListener("wheel", (event) => {
+  const box = event.currentTarget;
+  if (box.scrollWidth <= box.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  event.preventDefault();
+  box.scrollLeft += event.deltaY;
+}, { passive: false });
+// Drawn again when the tags in view change, and only then: a refresh must not take the focus off a tag.
+document.addEventListener("libraryrender", () => { if (addTagsKey() !== addTagsShown) renderAddTags(); });
 
 function addTypedTags(text) {
   text.split(",").map((tag) => tag.trim()).filter(Boolean).forEach((tag) => {
@@ -221,6 +293,12 @@ $("#add-tags").addEventListener("input", (event) => {
   showSuggestions(input);
 });
 $("#add-tag-chips").addEventListener("click", (event) => {
+  const offer = event.target.closest("[data-offer-tag]");
+  if (offer) {
+    addTypedTags(offer.dataset.offerTag);
+    ($("#url").value.trim() ? $("#add-tags") : $("#url")).focus();
+    return;
+  }
   const remove = event.target.closest("[data-remove-add-tag]");
   if (!remove) return;
   addTags.splice(Number(remove.dataset.removeAddTag), 1);
@@ -979,6 +1057,7 @@ function receiveShare() {
 function setupCapture() {
   const origin = location.origin;
   $("#shortcut-url").textContent = `${origin}/share?url=`;
+  $("#extension-server").textContent = origin;
   $("#capture-local").hidden = !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
@@ -1091,28 +1170,50 @@ loadArticleTexts = () => {
 };
 loadArticleTexts();
 
-// Changing the password closes every other session and hides private archives again.
-$("#open-password").addEventListener("click", () => {
-  $("#password-form").reset();
-  $("#password-error").hidden = true;
-  $("#password-dialog").showModal();
-  $("#password-current").focus();
+// The account: its username, shown here, and its password. The current password confirms any change; a new
+// password closes every other session and hides private archives again.
+// A new username is shown once more before it is saved: a typo in it would lock the account's owner out.
+function confirmUsername(name) {
+  $("#account-confirm").replaceChildren(t("account.confirmUsername"), " ", Object.assign(document.createElement("strong"), { textContent: name }));
+  for (const selector of ["#account-confirm", "#account-back"]) $(selector).hidden = !name;
+  for (const selector of ["#account-form", "#account-text", "#account-cancel"]) $(selector).hidden = Boolean(name);
+  $("#account-submit").textContent = t(name ? "account.confirm" : "account.submit");
+  if (name) $("#account-submit").focus();
+}
+$("#open-account").addEventListener("click", () => {
+  $("#account-form").reset();
+  $("#account-username").value = state.system?.username || "";
+  $("#account-error").hidden = true;
+  confirmUsername("");
+  $("#account-dialog").showModal();
+  $("#account-username").focus();
 });
-$("#password-dialog").addEventListener("close", () => $("#password-form").reset());
-$("#password-form").addEventListener("submit", async (event) => {
+$("#account-dialog").addEventListener("close", () => $("#account-form").reset());
+$("#account-back").addEventListener("click", () => { confirmUsername(""); $("#account-username").focus(); });
+$("#account-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const error = (message) => { $("#password-error").textContent = message; $("#password-error").hidden = false; };
-  if ($("#password-new").value !== $("#password-repeat").value) { error(t("auth.mismatch")); $("#password-repeat").select(); return; }
-  $("#password-submit").disabled = true;
+  const error = (message) => { $("#account-error").textContent = message; $("#account-error").hidden = false; };
+  const password = $("#account-new").value;
+  if (password !== $("#account-repeat").value) { error(t("auth.mismatch")); $("#account-repeat").select(); return; }
+  const name = $("#account-username").value.trim();
+  if (state.system && name !== state.system.username && $("#account-confirm").hidden) {
+    $("#account-error").hidden = true;
+    confirmUsername(name);
+    return;
+  }
+  $("#account-submit").disabled = true;
   try {
-    await api("/api/account/password", { method: "POST", body: JSON.stringify({ current: $("#password-current").value, password: $("#password-new").value }) });
-    $("#password-dialog").close();
-    lockPrivate("silent");
-    toast(t("password.changed"));
+    const body = { current: $("#account-current").value, username: name, password };
+    const { username } = await api("/api/account", { method: "POST", body: JSON.stringify(body) });
+    if (state.system) state.system.username = username;
+    $("#account-dialog").close();
+    if (password) lockPrivate("silent");
+    toast(t("account.saved"));
   } catch (failure) {
+    confirmUsername("");
     error(failure.message);
   } finally {
-    $("#password-submit").disabled = false;
+    $("#account-submit").disabled = false;
   }
 });
 // Private archives: shown for the account's password typed again, hidden again by the lock or a reload.

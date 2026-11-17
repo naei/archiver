@@ -76,6 +76,7 @@
   "Only a failed archive can be retried.": "Seule une archive en échec peut être relancée.",
   "Restore the S3 configuration to delete this archive.": "Rétablissez la configuration S3 pour supprimer cette archive.",
   "The S3 storage refused to delete some files.": "Le stockage S3 a refusé la suppression de certains fichiers.",
+  "The extension is not part of this installation.": "L’extension ne fait pas partie de cette installation.",
   "The S3 configuration is needed to read this archive.": "La configuration S3 est nécessaire pour lire cette archive.",
   "The S3 configuration is needed to modify this archive.": "La configuration S3 est nécessaire pour modifier cette archive.",
   "This {platform} link does not lead to something that can be archived: use the link of a post or a video, not of a profile, a channel or a list.": "Ce lien {platform} ne mène pas à un contenu archivable : utilisez le lien d’un post ou d’une vidéo, pas celui d’un profil, d’une chaîne ou d’une liste.",

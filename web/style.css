@@ -540,7 +540,7 @@ h1 {
 }
 
 .add-section {
-  margin-bottom: 34px;
+  margin-bottom: 12px;
 }
 
 .url-form {
@@ -599,12 +599,122 @@ input::placeholder, textarea::placeholder {
   flex: none;
 }
 
-/* The tags given with the link, under the form: all of them in view, the form keeping its height. */
+/* The tags given with the link: one line under the form, whose place is kept so that the page never moves. The
+   line starts under the tags field, grows towards the left once longer, then scrolls and fades at the edge it
+   goes on beyond. Its padding leaves room for the focus rings, taken back by the margins. */
+@property --add-tags-fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --add-tags-fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 .add-tag-chips {
+  --fade: 32px;
   display: flex;
-  flex-wrap: wrap;
+  height: 36px;
+  margin: 2px -6px -6px;
+  padding: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-padding-inline: var(--fade);
+  mask:
+    linear-gradient(black, black) no-clip subtract,
+    linear-gradient(to right, black, transparent) 0 0 / var(--add-tags-fade-start) 100% no-repeat no-clip,
+    linear-gradient(to right, transparent, black) 100% 0 / var(--add-tags-fade-end) 100% no-repeat no-clip;
+  animation: add-tags-fade-start linear both, add-tags-fade-end linear both;
+  animation-timeline: scroll(self inline);
+  animation-range: 0 var(--fade), calc(100% - var(--fade)) 100%;
+}
+
+.add-tag-chips::-webkit-scrollbar {
+  display: none;
+}
+
+/* Longer than the form, the line is held and dragged. */
+.add-tag-chips.scrollable {
+  cursor: grab;
+}
+
+.add-tag-chips.dragging, .add-tag-chips.dragging * {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.add-tag-chips.more-start {
+  --add-tags-fade-start: var(--fade);
+}
+
+.add-tag-chips.more-end {
+  --add-tags-fade-end: var(--fade);
+}
+
+@keyframes add-tags-fade-start {
+  to {
+    --add-tags-fade-start: var(--fade);
+  }
+}
+
+@keyframes add-tags-fade-end {
+  from {
+    --add-tags-fade-end: var(--fade);
+  }
+}
+
+.add-tag-line {
+  display: flex;
+  flex: none;
+  align-items: center;
   gap: 6px;
-  margin-top: 10px;
+  min-width: min(var(--add-tags-width, 0px), 100%);
+  margin-left: auto;
+}
+
+.add-tag-line > * {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The tags in view, offered for the link and not given to it yet: dashed, with a plus, and named as offered. */
+.add-tag-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-tag-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.add-tag-chips .tag-chip.offered, .add-tag-chips .tag-chip.offered:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  background: none;
+  outline: 1px dashed var(--faint);
+  outline-offset: -1px;
+}
+
+.add-tag-chips .tag-chip.offered:hover {
+  color: var(--blue);
+  outline-color: var(--blue);
+}
+
+.add-tag-chips .tag-chip.offered:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.add-tag-chips .tag-chip.offered svg {
+  width: 11px;
+  height: 11px;
 }
 
 /* Only their cross is clickable: no hover as on the tags that filter the library. */
@@ -2361,6 +2471,12 @@ dialog::backdrop {
   line-height: 1.6;
 }
 
+/* The new username stands out from the sentence asking to check it. */
+#account-confirm strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 .confirm-actions {
   display: flex;
   justify-content: flex-end;
@@ -2664,6 +2780,13 @@ dialog::backdrop {
   padding-left: 1.3em;
 }
 
+/* A step's button sits on its own line, under the sentence. */
+.capture-dialog li .button {
+  display: flex;
+  width: fit-content;
+  margin: 6px 0;
+}
+
 .capture-dialog code {
   display: block;
   margin-top: 6px;
@@ -2853,6 +2976,32 @@ kbd {
 .about-icon svg {
   width: 16px;
   height: 16px;
+}
+
+.about-support {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 14px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.about-support p {
+  flex: 1 1 220px;
+}
+
+.about-support-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.about-support + .about-note {
+  margin-top: 18px;
 }
 
 .about-note {

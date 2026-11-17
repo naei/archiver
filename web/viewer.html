@@ -14,7 +14,7 @@ __ARCHIVER_STYLE__
   <script>__ARCHIVER_THEME__</script>
 </head>
 <body data-readonly="1">
-  <a class="skip-link" href="#main" data-i18n="skip">Skip to the library</a>
+  <a class="skip-link" href="#main" data-i18n="skip"></a>
   <header class="mobile-bar">
     <button class="icon-button" id="open-menu" type="button" aria-controls="sidebar" aria-expanded="false" data-i18n-aria="nav.menu"><span data-icon="menu"></span></button>
     <span class="brand"><img src="__ARCHIVER_ICON__" width="32" height="32" alt="">archiver</span>
@@ -24,56 +24,56 @@ __ARCHIVER_STYLE__
     <span class="brand"><img src="__ARCHIVER_ICON__" width="32" height="32" alt="">archiver</span>
     <p class="viewer-date" id="viewer-date"></p>
     <nav aria-label="Library" data-i18n-aria="nav.all">
-      <button class="nav-button active" data-view="all"><span data-icon="library"></span><span data-i18n="nav.all">Library</span><span class="count" id="all-count">0</span></button>
-      <div class="tags-heading status-heading" hidden><span data-i18n="statuses.heading">Status</span></div>
-      <button class="nav-button" data-view="gone" data-status hidden><span data-icon="archive"></span><span data-i18n="nav.gone">Gone</span><span class="count" id="gone-count">0</span></button>
+      <button class="nav-button active" data-view="all"><span data-icon="library"></span><span data-i18n="nav.all"></span><span class="count" id="all-count">0</span></button>
+      <div class="tags-heading status-heading" hidden><span data-i18n="statuses.heading"></span></div>
+      <button class="nav-button" data-view="gone" data-status hidden><span data-icon="archive"></span><span data-i18n="nav.gone"></span><span class="count" id="gone-count">0</span></button>
     </nav>
-    <div class="tags-heading"><span data-i18n="tags.heading">Tags</span><span id="tags-icon" data-icon="tag"></span><button class="status-toggle" id="tags-clear" type="button" hidden></button></div>
-    <div class="tag-search" id="tag-search-field" hidden><span data-icon="search"></span><label class="sr-only" for="tag-search" data-i18n="tags.search">Search tags</label><input type="search" id="tag-search" autocomplete="off" data-i18n-placeholder="tags.search"></div>
+    <div class="tags-heading"><span data-i18n="tags.heading"></span><span id="tags-icon" data-icon="tag"></span><button class="status-toggle" id="tags-clear" type="button" hidden></button></div>
+    <div class="tag-search" id="tag-search-field" hidden><span data-icon="search"></span><label class="sr-only" for="tag-search" data-i18n="tags.search"></label><input type="search" id="tag-search" autocomplete="off" data-i18n-placeholder="tags.search"></div>
     <div id="tag-nav" class="tag-nav"></div>
     <div class="sidebar-bottom">
       <div class="preferences">
         <button class="sidebar-link settings-toggle" id="settings-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" data-i18n-aria="settings.open" data-i18n-title="settings.open"><span data-icon="settings"></span></button>
         <div class="context-menu settings-menu" id="settings-menu" role="menu" data-i18n-aria="settings.open" hidden>
-          <div role="group" aria-labelledby="settings-language" data-languages><p class="menu-label" id="settings-language" data-i18n="pref.language">Language</p></div>
+          <div role="group" aria-labelledby="settings-language" data-languages><p class="menu-label" id="settings-language" data-i18n="pref.language"></p></div>
         </div>
         <button class="sidebar-link theme-toggle" id="theme-toggle" type="button"><span data-icon="sun"></span></button>
         <button class="sidebar-link private-toggle" id="private-toggle" type="button" aria-pressed="false"></button>
       </div>
       <div class="sidebar-status">
-        <p class="sidebar-meta" data-i18n-title="storage.label"><span data-icon="drive"></span><span class="sr-only" data-i18n="storage.label">Storage used</span><span id="storage-size">—</span></p>
+        <p class="sidebar-meta" data-i18n-title="storage.label"><span data-icon="drive"></span><span class="sr-only" data-i18n="storage.label"></span><span id="storage-size">—</span></p>
       </div>
     </div>
   </aside>
   <main id="main" tabindex="-1">
     <header class="page-header">
-      <h1 id="page-title" data-i18n="nav.all">Library</h1>
-      <button class="button secondary player-button" id="open-player" type="button"><span data-icon="play"></span><span data-i18n="player.open">Player</span></button>
+      <h1 id="page-title" data-i18n="nav.all"></h1>
+      <button class="button secondary player-button" id="open-player" type="button"><span data-icon="play"></span><span data-i18n="player.open"></span></button>
     </header>
 
     <section class="collection">
       <div class="collection-toolbar">
-        <search class="search-field"><span data-icon="search"></span><label class="sr-only" for="search" data-i18n="search.label">Search the library</label><input type="search" id="search" enterkeyhint="search" autocomplete="off" data-i18n-placeholder="search.placeholder"></search>
+        <search class="search-field"><span data-icon="search"></span><label class="sr-only" for="search" data-i18n="search.label"></label><input type="search" id="search" enterkeyhint="search" autocomplete="off" data-i18n-placeholder="search.placeholder"></search>
         <p class="result-count" id="result-count" role="status"></p>
         <div class="collection-controls">
-          <button class="toolbar-button" id="toggle-filters" type="button" aria-expanded="false" aria-controls="filter-panel"><span data-icon="filter"></span><span data-i18n="filter.open">Filters</span><span class="filter-count" id="filter-count"></span></button>
+          <button class="toolbar-button" id="toggle-filters" type="button" aria-expanded="false" aria-controls="filter-panel"><span data-icon="filter"></span><span data-i18n="filter.open"></span><span class="filter-count" id="filter-count"></span></button>
           <button class="toolbar-button view-options-toggle" id="toggle-view-options" type="button" aria-expanded="false" aria-controls="view-options" data-i18n-aria="layout.options"><span data-icon="more"></span></button>
           <div class="view-options" id="view-options">
             <button class="toolbar-button" id="toggle-layout" type="button"></button>
-            <label class="sr-only" for="sort" data-i18n="sort.label">Sort</label>
-            <select id="sort"><option value="newest" data-i18n="sort.newest">Recently added</option><option value="oldest" data-i18n="sort.oldest">Oldest added</option><option value="published" data-i18n="sort.published">Recently published</option><option value="published-oldest" data-i18n="sort.publishedOldest">Oldest published</option><option value="title" data-i18n="sort.title">Title A–Z</option><option value="title-desc" data-i18n="sort.titleDesc">Title Z–A</option></select>
+            <label class="sr-only" for="sort" data-i18n="sort.label"></label>
+            <select id="sort"><option value="newest" data-i18n="sort.newest"></option><option value="oldest" data-i18n="sort.oldest"></option><option value="published" data-i18n="sort.published"></option><option value="published-oldest" data-i18n="sort.publishedOldest"></option><option value="title" data-i18n="sort.title"></option><option value="title-desc" data-i18n="sort.titleDesc"></option></select>
           </div>
         </div>
       </div>
       <div id="filter-panel" class="filter-panel" hidden>
-        <label class="filter-field" for="filter-platform"><span data-i18n="filter.platform">Platform</span>
-          <select id="filter-platform"><option value="" data-i18n="filter.allPlatforms">All platforms</option></select></label>
-        <label class="filter-field" for="filter-date-field"><span data-i18n="filter.date">Date</span>
-          <select id="filter-date-field"><option value="created_at" data-i18n="date.added">Added</option><option value="published_at" data-i18n="date.published">Published</option></select></label>
-        <label class="filter-field" for="filter-from"><span data-i18n="filter.from">From</span><input type="date" id="filter-from"></label>
-        <label class="filter-field" for="filter-to"><span data-i18n="filter.to">To</span><input type="date" id="filter-to"></label>
-        <label class="filter-check" for="search-text"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText">Search inside articles and subtitles too</span></label>
-        <button class="text-link filter-clear" id="filter-clear" type="button" data-i18n="filter.clear">Clear filters</button>
+        <label class="filter-field" for="filter-platform"><span data-i18n="filter.platform"></span>
+          <select id="filter-platform"><option value="" data-i18n="filter.allPlatforms"></option></select></label>
+        <label class="filter-field" for="filter-date-field"><span data-i18n="filter.date"></span>
+          <select id="filter-date-field"><option value="created_at" data-i18n="date.added"></option><option value="published_at" data-i18n="date.published"></option></select></label>
+        <label class="filter-field" for="filter-from"><span data-i18n="filter.from"></span><input type="date" id="filter-from"></label>
+        <label class="filter-field" for="filter-to"><span data-i18n="filter.to"></span><input type="date" id="filter-to"></label>
+        <label class="filter-check" for="search-text"><input type="checkbox" id="search-text"><span data-i18n="filter.searchText"></span></label>
+        <button class="text-link filter-clear" id="filter-clear" type="button" data-i18n="filter.clear"></button>
       </div>
       <div id="active-filter" class="active-filter" hidden></div>
       <div id="library" tabindex="-1" class="media-grid" aria-busy="true"></div>

@@ -9,6 +9,5 @@ __pycache__
 .playwright-mcp
 tests
 .github
-extension
 README.md
 .env.*

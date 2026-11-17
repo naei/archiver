@@ -2066,7 +2066,7 @@ class HTTPTests(ServerTestCase):
         self.assertTrue(self.server.auth.unlocked(unlock))
         # Changing the password closes the client's session like every other.
         token = json.loads(self.request("POST", "/api/auth/login", {**credentials, "token": True}, extension)[2])["token"]
-        self.request("POST", "/api/account/password", {"current": PASSWORD, "password": PASSWORD + "!"})
+        self.request("POST", "/api/account", {"current": PASSWORD, "password": PASSWORD + "!"})
         self.assertEqual(self.request("GET", "/api/media/changes", headers={"Authorization": f"Bearer {token}", "Cookie": ""})[0], 401)
 
     def test_article_texts_for_searching(self):
@@ -2087,7 +2087,7 @@ class HTTPTests(ServerTestCase):
         self.unlock()
         other = self.cookie
         self.cookie = f"archiver_session={self.server.auth.open_session()}"
-        change = lambda current, new: self.request("POST", "/api/account/password", {"current": current, "password": new})
+        change = lambda current, new: self.request("POST", "/api/account", {"current": current, "password": new})
         self.assertEqual(change(PASSWORD, "short")[0], 400)
         self.assertEqual(change("wrong password", "a new long password")[0], 403)
         status, headers, _ = change(PASSWORD, "a new long password")
@@ -2101,6 +2101,40 @@ class HTTPTests(ServerTestCase):
         self.assertEqual(self.request("GET", "/api/media/changes")[0], 200)
         self.assertTrue(self.server.auth.check("admin", "a new long password"))
         self.assertFalse(self.server.auth.check("admin", PASSWORD))
+
+    def test_the_extension_is_offered_as_a_zip_once_signed_in(self):
+        status, headers, body = self.request("GET", "/api/extension")
+        self.assertEqual((status, headers["Content-Type"]), (200, "application/zip"))
+        self.assertIn('filename="archiver-extension.zip"', headers["Content-Disposition"])
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            names = archive.namelist()
+            self.assertIsNone(archive.testzip())
+        # One folder, as the browser loads it, with nothing left out.
+        self.assertTrue(all(name.startswith("archiver-extension/") for name in names))
+        self.assertIn("archiver-extension/manifest.json", names)
+        self.assertIn("archiver-extension/_locales/en/messages.json", names)
+        self.assertEqual(self.request("GET", "/api/extension", headers={"Cookie": ""})[0], 401)
+
+    def test_username_change_keeps_sessions_and_private_archives(self):
+        token = self.unlock()
+        change = lambda current, username: self.request("POST", "/api/account", {"current": current, "username": username})
+        self.assertEqual(json.loads(self.request("GET", "/api/system")[2])["username"], "admin")
+        self.assertEqual(change(PASSWORD, " ")[0], 400)
+        self.assertEqual(change(PASSWORD, "x" * 65)[0], 400)
+        self.assertEqual(change("wrong password", "renamed")[0], 403)
+        status, headers, body = change(PASSWORD, " renamed ")
+        self.assertEqual((status, json.loads(body), "Set-Cookie" in headers), (200, {"username": "renamed"}, False))
+        # Only the name changed: the session, what it unlocked and the password stay as they are.
+        self.assertEqual(json.loads(self.request("GET", "/api/system")[2])["username"], "renamed")
+        self.assertTrue(self.server.auth.unlocked(token))
+        self.assertTrue(self.server.auth.check("renamed", PASSWORD))
+        self.assertFalse(self.server.auth.check("admin", PASSWORD))
+        # Both at once, an empty new password keeping the current one.
+        self.assertEqual(self.request("POST", "/api/account", {"current": PASSWORD, "username": "again", "password": ""})[0], 200)
+        self.assertTrue(self.server.auth.check("again", PASSWORD))
+        status, headers, _ = self.request("POST", "/api/account", {"current": PASSWORD, "username": "both", "password": "a new long password"})
+        self.assertEqual((status, "Set-Cookie" in headers), (200, True))
+        self.assertTrue(self.server.auth.check("both", "a new long password"))
 
     def test_failed_attempts_pause_logins(self):
         self.cookie = ""

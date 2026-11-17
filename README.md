@@ -25,7 +25,7 @@ The web forgets. A video you loved, a thread that made you laugh, an article tha
 
 Archiver keeps a copy of what mattered to you. Paste a link and it saves the original file, its text and where it came from, in a library that is yours and that you can search years later.
 
-It runs on your own computer or server, for one person, and reads the web as a logged-out visitor would: only public content can be archived.
+It runs on your own computer or server, for one person. It currently reads the web as a logged-out visitor would, so it archives public content.
 
 ## Features
 
@@ -66,7 +66,7 @@ In the interface, **Archive from anywhere** (in the settings menu, behind the ge
 
 | From | How |
 | --- | --- |
-| Computer | The Chrome extension: in `chrome://extensions`, turn on **Developer mode**, **Load unpacked** the [`extension`](extension) folder, then **Connect**. One click or `Alt+Shift+A` sends the open tab. |
+| Computer | The Chrome extension: download it from **Archive from anywhere** in the app's settings menu and unzip it (or use the [`extension`](extension) folder). In `chrome://extensions`, turn on **Developer mode**, **Load unpacked** that folder, then **Connect**. One click or `Alt+Shift+A` sends the open tab. |
 | Android | In Chrome, menu ⋮ → **Install app**. Archiver then appears in the **Share** menu. |
 | iPhone, iPad | A Shortcut in the share sheet that opens `https://your-server/share?url=` followed by the shared link. |
 

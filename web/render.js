@@ -38,6 +38,8 @@ const icons = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"/>',
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  card: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h3"/>',
+  heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
   logout: '<path d="M9 4H5v16h4M14 8l4 4-4 4M18 12H9"/>',
   filter: '<path d="M4 5h16l-6 7.5V19l-4-2v-4.5z"/>',
   restore: '<path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/>',
@@ -46,7 +48,7 @@ const icons = {
   autoplay: '<path d="M4 6v12l8-6zM13 6v12l8-6z"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
-  key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2m-3 3 3 3m-6 0 2 2"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-5 8-5s8 1.7 8 5"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
@@ -437,6 +439,8 @@ function renderSelection() {
 
 function render() {
   renderSidebar();
+  // The scripts that include this file listen to "libraryrender" for what follows the view and is their own.
+  document.dispatchEvent(new Event("libraryrender"));
   // One title says where we are: a status, tags, or the whole library; a status and tags together show the tags as pills.
   $("#page-title").textContent = state.view === "all" && state.tags.length ? state.tags.map(tagTitle).join(", ") : t(`nav.${state.view}`);
   const pills = [
@@ -1374,7 +1378,7 @@ document.addEventListener("keydown", (event) => {
     if ($("#card-menu") && cardMenuOpen()) { closeCardMenu(true); return; }
     if (!$("#settings-menu").hidden) { setSettings(false, true); return; }
     // Close the topmost dialog ourselves: native Escape handling is lost when focus leaves it.
-    const dialog = ["#media-dialog", "#title-dialog", "#delete-dialog", "#tag-dialog", "#private-dialog", "#password-dialog", "#shortcuts-dialog", "#capture-dialog", "#about-dialog", "#export-dialog", "#duplicate-dialog", "#detail-dialog"].map((selector) => $(selector)).find((element) => element?.open);
+    const dialog = ["#media-dialog", "#title-dialog", "#delete-dialog", "#tag-dialog", "#private-dialog", "#account-dialog", "#shortcuts-dialog", "#capture-dialog", "#about-dialog", "#export-dialog", "#duplicate-dialog", "#detail-dialog"].map((selector) => $(selector)).find((element) => element?.open);
     if (dialog) { event.preventDefault(); dialog.close(); return; }
     if ($(".sidebar").classList.contains("open")) { setMenu(false); return; }
     if (!$("#player").hidden) { closePlayer(); return; }

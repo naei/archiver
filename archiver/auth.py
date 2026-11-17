@@ -80,6 +80,19 @@ class Throttle:
             self.failures.append(time.monotonic())
 
 
+def valid_username(username):
+    username = username.strip() if isinstance(username, str) else ""
+    if not 1 <= len(username) <= 64:
+        raise ValueError("The username must have 1 to 64 characters.")
+    return username
+
+
+def valid_password(password):
+    if not isinstance(password, str) or len(password) < MIN_PASSWORD:
+        raise ValueError(f"The password must have at least {MIN_PASSWORD} characters.")
+    return password
+
+
 class Auth:
     def __init__(self, store):
         self.store = store
@@ -105,11 +118,7 @@ class Auth:
         """Create the account, only while none exists."""
         if self.configured():
             raise AccountExists()
-        username = username.strip() if isinstance(username, str) else ""
-        if not 1 <= len(username) <= 64:
-            raise ValueError("The username must have 1 to 64 characters.")
-        if not isinstance(password, str) or len(password) < MIN_PASSWORD:
-            raise ValueError(f"The password must have at least {MIN_PASSWORD} characters.")
+        username, password = valid_username(username), valid_password(password)
         try:
             with closing(self.store.connect()) as db, db:
                 db.execute("INSERT INTO account VALUES (1, ?, ?, ?)", (username, hash_password(password), now()))
@@ -129,19 +138,24 @@ class Auth:
         self.throttle.fail()
         return False
 
-    def change_password(self, current, new):
-        """Replace the password, given the current one (counted by the throttle); False when it is wrong.
+    def update(self, current, username=None, password=None):
+        """Replace the username, the password or both, given the current password (counted by the throttle);
+        False when it is wrong.
 
-        Every session is closed and every unlock token revoked: whoever knew the old password is out."""
+        A new password closes every session and revokes every unlock token: whoever knew the old one is out."""
         account = self.account()
-        if not isinstance(new, str) or len(new) < MIN_PASSWORD:
-            raise ValueError(f"The password must have at least {MIN_PASSWORD} characters.")
+        username = account and account["username"] if username is None else valid_username(username)
+        if password is not None:
+            password = valid_password(password)
         if not account or not self.check(account["username"], current):
             return False
         with closing(self.store.connect()) as db, db:
-            db.execute("UPDATE account SET password = ? WHERE id = 1", (hash_password(new),))
-            db.execute("DELETE FROM sessions")
-        self.lock()
+            db.execute("UPDATE account SET username = ? WHERE id = 1", (username,))
+            if password is not None:
+                db.execute("UPDATE account SET password = ? WHERE id = 1", (hash_password(password),))
+                db.execute("DELETE FROM sessions")
+        if password is not None:
+            self.lock()
         return True
 
     def unlock(self, password):

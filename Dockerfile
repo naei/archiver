@@ -19,6 +19,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY archiver ./archiver
 COPY web ./web
+COPY extension ./extension
 COPY run.py .
 USER archiver
 EXPOSE 8000
